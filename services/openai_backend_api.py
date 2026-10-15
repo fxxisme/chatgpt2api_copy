@@ -64,7 +64,8 @@ DEFAULT_CLIENT_BUILD_NUMBER = "6708908"
 DEFAULT_POW_SCRIPT = "https://chatgpt.com/backend-api/sentinel/sdk.js"
 # 2026-10-14 起 Cloudflare 会对 chrome146/chrome136/chrome145 等部分 curl_cffi 指纹直接拦截 403
 # chrome124 / chrome120 可稳定通过 Cloudflare 并完成 PoW 与对话
-DEFAULT_IMPERSONATE = "chrome124"
+# 2026-10-15 更新：chrome124 也开始被拦截，改用 chrome131（较新且稳定）
+DEFAULT_IMPERSONATE = "chrome131"
 LEGACY_IMPERSONATES = {
     "chrome146", "chrome145", "chrome136", "chrome133a",
     "chrome110", "chrome99", "chrome100", "chrome101", "chrome104", "chrome107",
@@ -209,8 +210,8 @@ class OpenAIBackendAPI:
             "Sec-Ch-Ua": self.fp["sec-ch-ua"],
             "Sec-Ch-Ua-Arch": '"x86"',
             "Sec-Ch-Ua-Bitness": '"64"',
-            "Sec-Ch-Ua-Full-Version": '"124.0.6367.207"',
-            "Sec-Ch-Ua-Full-Version-List": '"Chromium";v="124.0.6367.207", "Google Chrome";v="124.0.6367.207", "Not-A.Brand";v="99.0.0.0"',
+            "Sec-Ch-Ua-Full-Version": '"131.0.6778.140"',
+            "Sec-Ch-Ua-Full-Version-List": '"Chromium";v="131.0.6778.140", "Google Chrome";v="131.0.6778.140", "Not-A.Brand";v="99.0.0.0"',
             "Sec-Ch-Ua-Mobile": self.fp["sec-ch-ua-mobile"],
             "Sec-Ch-Ua-Model": '""',
             "Sec-Ch-Ua-Platform": self.fp["sec-ch-ua-platform"],
@@ -396,11 +397,11 @@ class OpenAIBackendAPI:
         fp.setdefault(
             "user-agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         )
         fp.setdefault("oai-device-id", new_uuid())
         fp.setdefault("oai-session-id", new_uuid())
-        fp.setdefault("sec-ch-ua", '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"')
+        fp.setdefault("sec-ch-ua", '"Chromium";v="131", "Google Chrome";v="131", "Not-A.Brand";v="99"')
         fp.setdefault("sec-ch-ua-mobile", "?0")
         fp.setdefault("sec-ch-ua-platform", '"Windows"')
         return fp
@@ -2888,10 +2889,14 @@ class OpenAIBackendAPI:
                     self.client_version = self.pow_data_build
                     self.session.headers["OAI-Client-Version"] = self.pow_data_build
             else:
+                # 记录详细错误信息，方便排查 Cloudflare 拦截等问题
+                body_preview = response.text[:500] if hasattr(response, "text") else str(response.content[:500])
                 logger.warning({
                     "event": "bootstrap_skipped",
                     "status": response.status_code,
                     "reason": "non_200_response",
+                    "body_preview": body_preview,
+                    "impersonate": self.fp.get("impersonate"),
                 })
         except Exception as exc:
             logger.warning({
