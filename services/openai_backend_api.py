@@ -24,6 +24,7 @@ from PIL import Image
 from services.account_service import account_service
 from services.config import config
 from services.proxy_service import proxy_settings
+from services.sentinel_solver_client import solve_turnstile, solver_user_agent
 from utils.helper import UpstreamHTTPError, ensure_ok, iter_sse_payloads, new_uuid, split_image_model
 from utils.log import logger
 from utils.pow import build_legacy_requirements_token, build_proof_token, parse_pow_resources
@@ -61,6 +62,9 @@ class ChatRequirements:
 DEFAULT_CLIENT_VERSION = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
 DEFAULT_CLIENT_BUILD_NUMBER = "6708908"
 DEFAULT_POW_SCRIPT = "https://chatgpt.com/backend-api/sentinel/sdk.js"
+# 2026-10-14 起 chrome110 等旧 TLS 指纹会被识别为机器人/黑号，对话接口返回伪装的 404 或 "Model not found"
+DEFAULT_IMPERSONATE = "chrome146"
+LEGACY_IMPERSONATES = {"chrome110", "chrome99", "chrome100", "chrome101", "chrome104", "chrome107"}
 CODEX_IMAGE_MODEL = "codex-gpt-image-2"
 CODEX_RESPONSES_MODEL = "gpt-5.5"
 TEXT_STREAM_TIMEOUT_SECS = 300.0
@@ -382,18 +386,24 @@ class OpenAIBackendAPI:
             value = str(account.get(key) or "").strip()
             if value:
                 fp[key] = value
+        if fp.get("impersonate") in LEGACY_IMPERSONATES:
+            fp.pop("impersonate")
+        fp.setdefault("impersonate", DEFAULT_IMPERSONATE)
         fp.setdefault(
             "user-agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
+            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
         )
-        fp.setdefault("impersonate", "chrome110")
         fp.setdefault("oai-device-id", new_uuid())
         fp.setdefault("oai-session-id", new_uuid())
-        fp.setdefault("sec-ch-ua", '"Microsoft Edge";v="143", "Chromium";v="143", "Not A(Brand";v="24"')
+        fp.setdefault("sec-ch-ua", '"Google Chrome";v="146", "Chromium";v="146", "Not A(Brand";v="24"')
         fp.setdefault("sec-ch-ua-mobile", "?0")
         fp.setdefault("sec-ch-ua-platform", '"Windows"')
         return fp
+
+    def _sentinel_user_agent(self) -> str:
+        """requirements/proof token 的 UA，与 Turnstile 求解页面保持一致。"""
+        return solver_user_agent() or self.user_agent
 
     def _headers(self, path: str, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """构造请求头，并在使用非官方代理时补上 target path/route。"""
@@ -1022,7 +1032,9 @@ class OpenAIBackendAPI:
         """为图片生成准备 conduit token。"""
         path = "/backend-api/f/conversation/prepare"
         payload = {
+            "turn_attribution": {"turn_trigger": "composer"},
             "action": "next",
+            "is_do_not_remember": False,
             "fork_from_shared_post": False,
             "parent_message_id": "client-created-root",
             "model": self._image_model_slug(model),
@@ -1154,7 +1166,9 @@ class OpenAIBackendAPI:
                 "height": item["height"],
             } for item in references]
         payload = {
+            "turn_attribution": {"turn_trigger": "composer"},
             "action": "next",
+            "is_do_not_remember": False,
             "messages": [{
                 "id": new_uuid(),
                 "author": {"role": "user"},
@@ -2866,7 +2880,8 @@ class OpenAIBackendAPI:
     def _get_chat_requirements(self) -> ChatRequirements:
         """获取当前模式对话所需的 sentinel token（prepare + finalize 两步流程）。"""
         base = "/backend-api/sentinel/chat-requirements" if self.access_token else "/backend-anon/sentinel/chat-requirements"
-        p_token = build_legacy_requirements_token(self.user_agent, self.pow_script_sources, self.pow_data_build)
+        sentinel_user_agent = self._sentinel_user_agent()
+        p_token = build_legacy_requirements_token(sentinel_user_agent, self.pow_script_sources, self.pow_data_build)
 
         prepare_path = base + "/prepare"
         response = self.session.post(
@@ -2887,7 +2902,7 @@ class OpenAIBackendAPI:
             proof_token = build_proof_token(
                 proof_info.get("seed", ""),
                 proof_info.get("difficulty", ""),
-                self.user_agent,
+                sentinel_user_agent,
                 script_sources=self.pow_script_sources,
                 data_build=self.pow_data_build,
             )
@@ -2895,17 +2910,19 @@ class OpenAIBackendAPI:
         turnstile_token = ""
         turnstile_info = prepare_data.get("turnstile") or {}
         if turnstile_info.get("required") and turnstile_info.get("dx"):
-            turnstile_token = solve_turnstile_token(turnstile_info["dx"], p_token) or ""
+            turnstile_token = solve_turnstile(turnstile_info["dx"], p_token)
 
         finalize_path = base + "/finalize"
+        finalize_payload = {
+            "prepare_token": prepare_data.get("prepare_token", ""),
+            "proofofwork": proof_token,
+            "turnstile": turnstile_token,
+        }
+
         response = self.session.post(
             self.base_url + finalize_path,
             headers=self._headers(finalize_path, {"Content-Type": "application/json"}),
-            json={
-                "prepare_token": prepare_data.get("prepare_token", ""),
-                "proof_token": proof_token,
-                "turnstile_token": turnstile_token,
-            },
+            json=finalize_payload,
             timeout=self._deadline_timeout_secs(30),
         )
         ensure_ok(response, "chat_requirements_finalize")

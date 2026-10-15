@@ -97,6 +97,20 @@ def solve_turnstile_token(dx: str, p: str) -> Optional[str]:
     def func_8(e: float, t: float) -> None:
         process_map[e] = process_map[t]
 
+    def func_11(e: float, t: float) -> None:
+        process_map[e] = "https://chatgpt.com/backend-api/sentinel/sdk.js"
+
+    def func_12(e: float) -> None:
+        process_map[e] = process_map
+
+    def func_13(e: float, t: float, *args: float) -> None:
+        try:
+            target = process_map.get(t)
+            if callable(target):
+                process_map[e] = target(*[process_map.get(a) for a in args])
+        except Exception as err:
+            process_map[e] = str(err)
+
     def func_14(e: float, t: float) -> None:
         process_map[e] = json.loads(process_map[t])
 
@@ -142,8 +156,19 @@ def solve_turnstile_token(dx: str, p: str) -> Optional[str]:
     def func_21(*_: Any) -> None:
         return
 
+    def func_22(e: float, t: Any) -> None:
+        try:
+            sub_tokens = list(t) if isinstance(t, (list, tuple)) else []
+            for sub in sub_tokens:
+                s_op = sub[0]
+                s_fn = process_map.get(s_op)
+                if callable(s_fn):
+                    s_fn(*sub[1:])
+        except Exception as err:
+            process_map[e] = str(err)
+
     def func_23(e: float, t: float, *args: float) -> None:
-        if process_map[e] is not None and callable(process_map[t]):
+        if process_map.get(e) is not None and callable(process_map.get(t)):
             process_map[t](*args)
 
     def func_24(e: float, t: float, n: float) -> None:
@@ -151,6 +176,66 @@ def solve_turnstile_token(dx: str, p: str) -> Optional[str]:
         nv = process_map[n]
         if isinstance(tv, str) and isinstance(nv, str):
             process_map[e] = f"{tv}.{nv}"
+
+    def func_25(*_: Any) -> None:
+        pass
+
+    def func_26(*_: Any) -> None:
+        pass
+
+    def func_27(e: float, t: float) -> None:
+        current = process_map.get(e)
+        target = process_map.get(t)
+        if isinstance(current, list):
+            if target in current:
+                current.remove(target)
+        else:
+            try:
+                process_map[e] = float(current) - float(target)
+            except Exception:
+                process_map[e] = 0
+
+    def func_28(*_: Any) -> None:
+        pass
+
+    def func_29(e: float, t: float, n: float) -> None:
+        try:
+            process_map[e] = bool(process_map.get(t) < process_map.get(n))
+        except Exception:
+            process_map[e] = False
+
+    def func_30(e: float, t: float, n: Any, r: Any = None) -> None:
+        has_params = isinstance(r, list)
+        params = n if has_params else []
+        body = (r if has_params else n) or []
+        def generated_func(*args: Any) -> Any:
+            if has_params:
+                for idx, p_name in enumerate(params):
+                    if idx < len(args):
+                        process_map[p_name] = args[idx]
+            for sub in (body if isinstance(body, list) else []):
+                if isinstance(sub, list) and sub:
+                    s_fn = process_map.get(sub[0])
+                    if callable(s_fn):
+                        s_fn(*sub[1:])
+            return process_map.get(t)
+        process_map[e] = generated_func
+
+    def func_33(e: float, t: float, n: float) -> None:
+        try:
+            process_map[e] = float(process_map.get(t)) * float(process_map.get(n))
+        except Exception:
+            process_map[e] = 0
+
+    def func_34(e: float, t: float) -> None:
+        process_map[e] = process_map.get(t)
+
+    def func_35(e: float, t: float, n: float) -> None:
+        try:
+            divisor = float(process_map.get(n))
+            process_map[e] = float(process_map.get(t)) / divisor if divisor != 0 else 0
+        except Exception:
+            process_map[e] = 0
 
     process_map.update({
         1: func_1,
@@ -162,6 +247,9 @@ def solve_turnstile_token(dx: str, p: str) -> Optional[str]:
         8: func_8,
         9: token_list,
         10: "window",
+        11: func_11,
+        12: func_12,
+        13: func_13,
         14: func_14,
         15: func_15,
         16: p,
@@ -170,8 +258,18 @@ def solve_turnstile_token(dx: str, p: str) -> Optional[str]:
         19: func_19,
         20: func_20,
         21: func_21,
+        22: func_22,
         23: func_23,
         24: func_24,
+        25: func_25,
+        26: func_26,
+        27: func_27,
+        28: func_28,
+        29: func_29,
+        30: func_30,
+        33: func_33,
+        34: func_34,
+        35: func_35,
     })
 
     for token in token_list:
