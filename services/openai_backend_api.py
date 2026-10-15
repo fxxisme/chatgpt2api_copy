@@ -170,6 +170,14 @@ class OpenAIBackendAPI:
         self.access_token = access_token
         self.account = account_service.get_account(self.access_token) if self.access_token else {}
         self.account = self.account if isinstance(self.account, dict) else {}
+        self.account_id = str(self.account.get("account_id") or "").strip()
+        if not self.account_id and self.access_token:
+            jwt_payload = account_service._decode_jwt_payload(self.access_token)
+            auth_claim = jwt_payload.get("https://api.openai.com/auth")
+            if isinstance(auth_claim, dict):
+                self.account_id = str(auth_claim.get("chatgpt_account_id") or "").strip()
+            if not self.account_id:
+                self.account_id = str(jwt_payload.get("chatgpt_account_id") or "").strip()
         self.fp = self._build_fp()
         self.user_agent = self.fp["user-agent"]
         self.device_id = self.fp["oai-device-id"]
@@ -210,6 +218,8 @@ class OpenAIBackendAPI:
         })
         if self.access_token:
             self.session.headers["Authorization"] = f"Bearer {self.access_token}"
+        if self.account_id:
+            self.session.headers["chatgpt-account-id"] = self.account_id
 
     def _active_request_deadline(self) -> float | None:
         for attr_name in ("request_deadline", "image_request_deadline"):
@@ -386,10 +396,11 @@ class OpenAIBackendAPI:
         return fp
 
     def _headers(self, path: str, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        """构造请求头，并补上 web 端要求的 target path/route。"""
+        """构造请求头，并在使用非官方代理时补上 target path/route。"""
         headers = dict(self.session.headers)
-        headers["X-OpenAI-Target-Path"] = path
-        headers["X-OpenAI-Target-Route"] = path
+        if self.base_url != "https://chatgpt.com":
+            headers["X-OpenAI-Target-Path"] = path
+            headers["X-OpenAI-Target-Route"] = path
         if extra:
             headers.update(extra)
         return headers
@@ -650,7 +661,7 @@ class OpenAIBackendAPI:
             "action": "next",
             "messages": self._api_messages_to_conversation_messages(messages),
             "model": model,
-            "parent_message_id": new_uuid(),
+            "parent_message_id": "client-created-root",
             "conversation_mode": {"kind": "primary_assistant"},
             "conversation_origin": None,
             "force_paragen": False,
@@ -681,12 +692,25 @@ class OpenAIBackendAPI:
             payload["thinking_effort"] = normalized_effort
         return payload
 
+    def _account_plan_type(self) -> str:
+        account = getattr(self, "account", {}) or {}
+        plan_type = str(account.get("type") or "").strip().lower()
+        access_token = getattr(self, "access_token", "")
+        if not plan_type and access_token:
+            jwt_payload = account_service._decode_jwt_payload(access_token)
+            auth_claim = jwt_payload.get("https://api.openai.com/auth")
+            if isinstance(auth_claim, dict):
+                plan_type = str(auth_claim.get("chatgpt_plan_type") or "").strip().lower()
+        return plan_type
+
     def _image_model_slug(self, model: str) -> str:
         """把标准图片模型名映射到底层 model slug。"""
         _, base_model = split_image_model(model)
         if not base_model:
             return "auto"
         if base_model == "gpt-image-2":
+            if self._account_plan_type() == "free":
+                return "auto"
             return "gpt-5-5-thinking"
         if base_model == CODEX_IMAGE_MODEL:
             return base_model
@@ -702,6 +726,10 @@ class OpenAIBackendAPI:
         }
         if requirements.proof_token:
             headers["OpenAI-Sentinel-Proof-Token"] = requirements.proof_token
+        if requirements.turnstile_token:
+            headers["OpenAI-Sentinel-Turnstile-Token"] = requirements.turnstile_token
+        if requirements.so_token:
+            headers["OpenAI-Sentinel-SO-Token"] = requirements.so_token
         if conduit_token:
             headers["X-Conduit-Token"] = conduit_token
         if accept == "text/event-stream":
@@ -996,7 +1024,7 @@ class OpenAIBackendAPI:
         payload = {
             "action": "next",
             "fork_from_shared_post": False,
-            "parent_message_id": new_uuid(),
+            "parent_message_id": "client-created-root",
             "model": self._image_model_slug(model),
             "client_prepare_state": "success",
             "timezone_offset_min": -480,
@@ -1134,9 +1162,9 @@ class OpenAIBackendAPI:
                 "content": content,
                 "metadata": metadata,
             }],
-            "parent_message_id": new_uuid(),
+            "parent_message_id": "client-created-root",
             "model": self._image_model_slug(model),
-            "client_prepare_state": "sent",
+            "client_prepare_state": "success",
             "timezone_offset_min": -480,
             "timezone": "Asia/Shanghai",
             "conversation_mode": {"kind": "primary_assistant"},
