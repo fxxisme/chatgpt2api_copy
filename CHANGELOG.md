@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.9.9 - 2026-10-15
+
++ [CI] 为 `chatgpt2api_copy-sentinel-solver` 镜像构建添加 QEMU 与 `linux/arm64` 多架构支持，解决 Oracle Cloud ARM64 等机器拉取缺失清单的问题。
+
 ## 1.9.8 - 2026-10-15
 
 + [修复] 解决 `prepare` 生成的 `conduit_token` 在 OpenAI 分布式边缘网关同步未就绪时触发的竞态 404 `Model not found`：添加 800ms 网关路由就绪缓冲，并在遭遇 404 时自动重试/重新协商。
