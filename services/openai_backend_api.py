@@ -62,9 +62,13 @@ class ChatRequirements:
 DEFAULT_CLIENT_VERSION = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
 DEFAULT_CLIENT_BUILD_NUMBER = "6708908"
 DEFAULT_POW_SCRIPT = "https://chatgpt.com/backend-api/sentinel/sdk.js"
-# 2026-10-14 起 chrome110 等旧 TLS 指纹会被识别为机器人/黑号，对话接口返回伪装的 404 或 "Model not found"
-DEFAULT_IMPERSONATE = "chrome146"
-LEGACY_IMPERSONATES = {"chrome110", "chrome99", "chrome100", "chrome101", "chrome104", "chrome107"}
+# 2026-10-14 起 Cloudflare 会对 chrome146/chrome136/chrome145 等部分 curl_cffi 指纹直接拦截 403
+# chrome124 / chrome120 可稳定通过 Cloudflare 并完成 PoW 与对话
+DEFAULT_IMPERSONATE = "chrome124"
+LEGACY_IMPERSONATES = {
+    "chrome146", "chrome145", "chrome136", "chrome133a",
+    "chrome110", "chrome99", "chrome100", "chrome101", "chrome104", "chrome107",
+}
 CODEX_IMAGE_MODEL = "codex-gpt-image-2"
 CODEX_RESPONSES_MODEL = "gpt-5.5"
 TEXT_STREAM_TIMEOUT_SECS = 300.0
@@ -205,8 +209,8 @@ class OpenAIBackendAPI:
             "Sec-Ch-Ua": self.fp["sec-ch-ua"],
             "Sec-Ch-Ua-Arch": '"x86"',
             "Sec-Ch-Ua-Bitness": '"64"',
-            "Sec-Ch-Ua-Full-Version": '"143.0.3650.96"',
-            "Sec-Ch-Ua-Full-Version-List": '"Microsoft Edge";v="143.0.3650.96", "Chromium";v="143.0.7499.147", "Not A(Brand";v="24.0.0.0"',
+            "Sec-Ch-Ua-Full-Version": '"124.0.6367.207"',
+            "Sec-Ch-Ua-Full-Version-List": '"Chromium";v="124.0.6367.207", "Google Chrome";v="124.0.6367.207", "Not-A.Brand";v="99.0.0.0"',
             "Sec-Ch-Ua-Mobile": self.fp["sec-ch-ua-mobile"],
             "Sec-Ch-Ua-Model": '""',
             "Sec-Ch-Ua-Platform": self.fp["sec-ch-ua-platform"],
@@ -392,11 +396,11 @@ class OpenAIBackendAPI:
         fp.setdefault(
             "user-agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         )
         fp.setdefault("oai-device-id", new_uuid())
         fp.setdefault("oai-session-id", new_uuid())
-        fp.setdefault("sec-ch-ua", '"Google Chrome";v="146", "Chromium";v="146", "Not A(Brand";v="24"')
+        fp.setdefault("sec-ch-ua", '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"')
         fp.setdefault("sec-ch-ua-mobile", "?0")
         fp.setdefault("sec-ch-ua-platform", '"Windows"')
         return fp
@@ -2866,16 +2870,37 @@ class OpenAIBackendAPI:
                     pass
 
     def _bootstrap(self) -> None:
-        """预热首页，并提取 PoW 相关脚本引用。"""
-        response = self.session.get(
-            self.base_url + "/",
-            headers=self._bootstrap_headers(),
-            timeout=self._deadline_timeout_secs(30),
-        )
-        ensure_ok(response, "bootstrap")
-        self.pow_script_sources, self.pow_data_build = parse_pow_resources(response.text)
-        if not self.pow_script_sources:
-            self.pow_script_sources = [DEFAULT_POW_SCRIPT]
+        """预热首页，并提取 PoW 相关脚本引用。即使失败也不阻断主业务流程。"""
+        if self.pow_script_sources:
+            return
+        try:
+            headers = self._bootstrap_headers()
+            headers["Authorization"] = None
+            headers["Chatgpt-Account-Id"] = None
+            response = self.session.get(
+                self.base_url + "/",
+                headers=headers,
+                timeout=self._deadline_timeout_secs(10),
+            )
+            if response.status_code == 200:
+                self.pow_script_sources, self.pow_data_build = parse_pow_resources(response.text)
+                if self.pow_data_build:
+                    self.client_version = self.pow_data_build
+                    self.session.headers["OAI-Client-Version"] = self.pow_data_build
+            else:
+                logger.warning({
+                    "event": "bootstrap_skipped",
+                    "status": response.status_code,
+                    "reason": "non_200_response",
+                })
+        except Exception as exc:
+            logger.warning({
+                "event": "bootstrap_failed",
+                "error": str(exc),
+            })
+        finally:
+            if not self.pow_script_sources:
+                self.pow_script_sources = [DEFAULT_POW_SCRIPT]
 
     def _get_chat_requirements(self) -> ChatRequirements:
         """获取当前模式对话所需的 sentinel token（prepare + finalize 两步流程）。"""

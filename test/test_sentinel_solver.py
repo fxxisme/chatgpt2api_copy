@@ -140,10 +140,21 @@ class BackendSentinelTests(unittest.TestCase):
     def test_legacy_impersonation_is_upgraded(self) -> None:
         with mock.patch.object(backend_module.account_service, "get_account", return_value={"impersonate": "chrome110"}):
             self.assertEqual(OpenAIBackendAPI(access_token="token").fp["impersonate"], DEFAULT_IMPERSONATE)
+        with mock.patch.object(backend_module.account_service, "get_account", return_value={"impersonate": "chrome146"}):
+            self.assertEqual(OpenAIBackendAPI(access_token="token").fp["impersonate"], DEFAULT_IMPERSONATE)
         with mock.patch.object(backend_module.account_service, "get_account", return_value={"impersonate": "safari17_0"}):
             self.assertEqual(OpenAIBackendAPI(access_token="token").fp["impersonate"], "safari17_0")
         with mock.patch.object(backend_module.account_service, "get_account", return_value={}):
             self.assertEqual(OpenAIBackendAPI(access_token="token").fp["impersonate"], DEFAULT_IMPERSONATE)
+
+    def test_bootstrap_resilient_on_403(self) -> None:
+        api = OpenAIBackendAPI(access_token="token")
+        mock_resp = mock.Mock()
+        mock_resp.status_code = 403
+        mock_resp.text = "<html>Cloudflare challenge</html>"
+        with mock.patch.object(api.session, "get", return_value=mock_resp):
+            api._bootstrap()
+            self.assertEqual(api.pow_script_sources, ["https://chatgpt.com/backend-api/sentinel/sdk.js"])
 
 
 class SentinelSolverConfigTests(unittest.TestCase):
