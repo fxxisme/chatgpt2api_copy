@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-## 1.9.7 - 2026-10-15
+## 1.9.8 - 2026-10-15
+
++ [修复] 解决 `prepare` 生成的 `conduit_token` 在 OpenAI 分布式边缘网关同步未就绪时触发的竞态 404 `Model not found`：添加 800ms 网关路由就绪缓冲，并在遭遇 404 时自动重试/重新协商。
++ [修复] 修正 `_image_model_slug`：移除不存在的模型名 `gpt-5-5-thinking`，统一对齐网页端抓包使用的标准 `auto`。
+
 
 + [修复] 修复生图接口 `/backend-api/f/conversation` 返回 404 `Model not found`：移除生图 Payload 中冲突的文本流字段（`conversation_mode`、`supports_buffering`、`enable_message_followups`），对齐网页端 `@创建图像 ` 提及与 `ecosystemMention` 结构，补齐 Codex Browser 请求头与 oai-did Cookie。
 + [修复] 修复 `ensure_ok` 在非 2xx 流式响应下未消费流导致 `body=` 为空的错误呈现问题。

@@ -744,12 +744,8 @@ class OpenAIBackendAPI:
     def _image_model_slug(self, model: str) -> str:
         """把标准图片模型名映射到底层 model slug。"""
         _, base_model = split_image_model(model)
-        if not base_model:
+        if not base_model or base_model == "gpt-image-2":
             return "auto"
-        if base_model == "gpt-image-2":
-            if self._account_plan_type() == "free":
-                return "auto"
-            return "gpt-5-5-thinking"
         if base_model == CODEX_IMAGE_MODEL:
             return base_model
         return base_model
@@ -1254,15 +1250,22 @@ class OpenAIBackendAPI:
             },
         }
         path = "/backend-api/f/conversation"
-        response = self.session.post(
-            self.base_url + path,
-            headers=self._image_headers(path, requirements, conduit_token, "text/event-stream"),
-            json=payload,
-            timeout=self._image_request_timeout_secs(),
-            stream=True,
-        )
-        ensure_ok(response, path)
-        return response
+        # 等待 conduit_token 在 OpenAI 分布式边缘网关同步就绪，避免微秒级并发触发 404 "Model not found"
+        time.sleep(0.8)
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            response = self.session.post(
+                self.base_url + path,
+                headers=self._image_headers(path, requirements, conduit_token, "text/event-stream"),
+                json=payload,
+                timeout=self._image_request_timeout_secs(),
+                stream=True,
+            )
+            if response.status_code == 404 and attempt < max_attempts:
+                time.sleep(1.0)
+                continue
+            ensure_ok(response, path)
+            return response
 
     def _get_conversation(self, conversation_id: str, timeout_secs: float = 60.0) -> Dict[str, Any]:
         """获取完整 conversation 详情。"""
@@ -2865,7 +2868,15 @@ class OpenAIBackendAPI:
         self._report_progress("preparing_conversation")
         conduit_token = self._prepare_image_conversation(prompt, requirements, model)
         self._report_progress("starting_generation")
-        response = self._start_image_generation(prompt, requirements, conduit_token, model, references)
+        try:
+            response = self._start_image_generation(prompt, requirements, conduit_token, model, references)
+        except UpstreamHTTPError as err:
+            if err.status_code == 404 and "Model not found" in str(err.body):
+                time.sleep(1.0)
+                conduit_token = self._prepare_image_conversation(prompt, requirements, model)
+                response = self._start_image_generation(prompt, requirements, conduit_token, model, references)
+            else:
+                raise
         self._report_progress("generating")
         yield from self._iter_sse_payloads_capped(response, self._image_stream_hard_cap_secs())
 
