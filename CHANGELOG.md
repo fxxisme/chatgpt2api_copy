@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.9.6 - 2026-10-15
+
++ [修复] 默认 TLS 指纹回退为 chrome124；实测 chrome131/145/146 访问 chatgpt.com 首页返回 403，chrome124/142/150 返回 200。
++ [修复] 默认启用 sentinel-solver：对话与生图接口需要真实页面算出的 Turnstile，本地求解器对新挑战返回空，会导致 `/backend-api/f/conversation` 返回伪装的空 404。
++ [新增] CI 同步构建并推送 `chatgpt2api_copy-sentinel-solver` 镜像，服务器只需 `docker compose pull`。
++ [优化] bootstrap 失败日志增加响应片段与当前指纹，便于排查 Cloudflare 拦截。
+
 ## 1.9.3 - 2026-09-20
 
 + [优化] 移除标注编辑区域的明暗双色斜纹，减少对原图内容的视觉干扰。
