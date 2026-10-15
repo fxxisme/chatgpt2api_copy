@@ -48,6 +48,25 @@ DEFAULT_CHAT_COMPLETION_CACHE = {
     "drop_assistant_history": False,
 }
 
+_COMMON_TZ_OFFSETS: dict[str, int] = {
+    "asia/shanghai": -480,
+    "asia/chongqing": -480,
+    "asia/hong_kong": -480,
+    "asia/taipei": -480,
+    "asia/singapore": -480,
+    "asia/tokyo": -540,
+    "asia/seoul": -540,
+    "utc": 0,
+    "gmt": 0,
+    "europe/london": 0,
+    "europe/paris": -60,
+    "europe/berlin": -60,
+    "america/new_york": 300,
+    "america/chicago": 360,
+    "america/denver": 420,
+    "america/los_angeles": 480,
+}
+
 DEFAULT_PROXY_RUNTIME_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -630,6 +649,37 @@ class ConfigStore:
         ).strip()
 
     @property
+    def timezone(self) -> str:
+        return str(
+            os.getenv("CHATGPT2API_TIMEZONE")
+            or os.getenv("SENTINEL_SOLVER_TIMEZONE")
+            or self.data.get("timezone")
+            or "Asia/Shanghai"
+        ).strip() or "Asia/Shanghai"
+
+    @property
+    def timezone_offset_min(self) -> int:
+        env_val = os.getenv("CHATGPT2API_TIMEZONE_OFFSET_MIN")
+        if env_val is not None and env_val.strip():
+            try:
+                return int(env_val.strip())
+            except ValueError:
+                pass
+        tz_name = self.timezone.lower().strip()
+        if tz_name in _COMMON_TZ_OFFSETS:
+            return _COMMON_TZ_OFFSETS[tz_name]
+        try:
+            from zoneinfo import ZoneInfo
+            from datetime import datetime
+            tz = ZoneInfo(self.timezone)
+            utcoffset = datetime.now(tz).utcoffset()
+            if utcoffset is not None:
+                return -int(utcoffset.total_seconds() / 60)
+        except Exception:
+            pass
+        return -480
+
+    @property
     def app_version(self) -> str:
         try:
             value = VERSION_FILE.read_text(encoding="utf-8").strip()
@@ -666,6 +716,8 @@ class ConfigStore:
         data["proxy_runtime"] = self.get_public_proxy_runtime_settings()
         data["third_party_apps"] = self.get_third_party_apps_settings()
         data["sentinel_solver_url"] = self.sentinel_solver_url
+        data["timezone"] = self.timezone
+        data["timezone_offset_min"] = self.timezone_offset_min
         data.pop("auth-key", None)
         data.pop("sentinel_solver_key", None)
         return data

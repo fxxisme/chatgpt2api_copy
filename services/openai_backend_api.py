@@ -431,7 +431,18 @@ class OpenAIBackendAPI:
 
     def _sentinel_user_agent(self) -> str:
         """requirements/proof token 的 UA，与 Turnstile 求解页面保持一致。"""
-        return solver_user_agent() or self.user_agent
+        ua = solver_user_agent()
+        if ua:
+            self.user_agent = ua
+            self.session.headers["User-Agent"] = ua
+            if "Linux" in ua:
+                self.session.headers["Sec-Ch-Ua-Platform"] = '"Linux"'
+            elif "Windows" in ua:
+                self.session.headers["Sec-Ch-Ua-Platform"] = '"Windows"'
+            elif "Mac" in ua:
+                self.session.headers["Sec-Ch-Ua-Platform"] = '"macOS"'
+            return ua
+        return self.user_agent
 
     def _headers(self, path: str, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """构造请求头，并在使用非官方代理时补上 target path/route。"""
@@ -471,7 +482,7 @@ class OpenAIBackendAPI:
                 "gizmo_id": None,
                 "requested_default_model": None,
                 "conversation_id": None,
-                "timezone_offset_min": -480,
+                "timezone_offset_min": config.timezone_offset_min,
             },
             timeout=20,
         )
@@ -481,7 +492,7 @@ class OpenAIBackendAPI:
 
     def _get_default_account(self) -> Dict[str, Any]:
         path = "/backend-api/accounts/check/v4-2023-04-27"
-        response = self.session.get(self.base_url + path + "?timezone_offset_min=-480", headers=self._headers(path),
+        response = self.session.get(f"{self.base_url}{path}?timezone_offset_min={config.timezone_offset_min}", headers=self._headers(path),
                                     timeout=20)
         if response.status_code != 200:
             self._raise_on_error(response, path)
@@ -711,8 +722,8 @@ class OpenAIBackendAPI:
             "suggestions": [],
             "supported_encodings": [],
             "system_hints": [],
-            "timezone": timezone,
-            "timezone_offset_min": -480,
+            "timezone": timezone or config.timezone,
+            "timezone_offset_min": config.timezone_offset_min,
             "variant_purpose": "comparison_implicit",
             "websocket_request_id": new_uuid(),
             "client_contextual_info": {
@@ -757,11 +768,6 @@ class OpenAIBackendAPI:
             "Content-Type": "application/json",
             "Accept": accept,
             "OpenAI-Sentinel-Chat-Requirements-Token": requirements.token,
-            "originator": "Codex Browser",
-            "x-openai-web-frontend": "codex_webview",
-            "x-openai-codex-window-type": "browser",
-            "x-openai-web-sse-compression": "gzip",
-            "x-oai-mcp-form-version": "2",
         }
         if requirements.proof_token:
             headers["OpenAI-Sentinel-Proof-Token"] = requirements.proof_token
@@ -771,8 +777,6 @@ class OpenAIBackendAPI:
             headers["OpenAI-Sentinel-SO-Token"] = requirements.so_token
         if conduit_token:
             headers["X-Conduit-Token"] = conduit_token
-        else:
-            headers["X-Conduit-Token"] = "no-token"
         if accept == "text/event-stream":
             headers["X-Oai-Turn-Trace-Id"] = new_uuid()
         return self._headers(path, headers)
@@ -1062,13 +1066,6 @@ class OpenAIBackendAPI:
     def _prepare_image_conversation(self, prompt: str, requirements: ChatRequirements, model: str) -> str:
         """为图片生成准备 conduit token。"""
         path = "/backend-api/f/conversation/prepare"
-        mention = "@创建图像 "
-        if not prompt.startswith("@创建图像"):
-            prefixed_prompt = f"{mention}{prompt}"
-        elif not prompt.startswith("@创建图像 "):
-            prefixed_prompt = f"@创建图像 {prompt[len('@创建图像'):]}"
-        else:
-            prefixed_prompt = prompt
         payload = {
             "turn_attribution": {"turn_trigger": "composer"},
             "action": "next",
@@ -1077,18 +1074,17 @@ class OpenAIBackendAPI:
             "parent_message_id": "client-created-root",
             "model": self._image_model_slug(model),
             "client_prepare_state": "success",
-            "timezone_offset_min": -480,
-            "timezone": "Asia/Shanghai",
+            "timezone_offset_min": config.timezone_offset_min,
+            "timezone": config.timezone,
             "system_hints": ["picture_v2"],
             "partial_query": {
                 "id": new_uuid(),
                 "author": {"role": "user"},
-                "content": {"content_type": "text", "parts": [prefixed_prompt]},
+                "content": {"content_type": "text", "parts": [prompt]},
             },
             "supported_encodings": ["v1"],
             "client_contextual_info": {
                 "app_name": "chatgpt.com",
-                "app_surface": "codex_browser",
             },
         }
         response = self.session.post(
@@ -1185,27 +1181,15 @@ class OpenAIBackendAPI:
             "height": item["height"],
             "size_bytes": item["file_size"],
         } for item in references]
-        mention = "@创建图像 "
-        if not prompt.startswith("@创建图像"):
-            prefixed_prompt = f"{mention}{prompt}"
-        elif not prompt.startswith("@创建图像 "):
-            prefixed_prompt = f"@创建图像 {prompt[len('@创建图像'):]}"
-        else:
-            prefixed_prompt = prompt
-        parts.append(prefixed_prompt)
+        parts.append(prompt)
         content = {"content_type": "multimodal_text", "parts": parts} if references else {"content_type": "text",
-                                                                                          "parts": [prefixed_prompt]}
+                                                                                          "parts": [prompt]}
         metadata = {
+            "developer_mode_connector_ids": [],
+            "selected_github_repos": [],
+            "selected_all_github_repos": False,
             "system_hints": ["picture_v2"],
-            "serialization_metadata": {
-                "render_format": "markdown",
-                "custom_symbol_offsets": [{
-                    "id": "picture_v2",
-                    "symbol": "ecosystemMention",
-                    "startIndex": 0,
-                    "endIndex": 5,
-                }],
-            },
+            "serialization_metadata": {"custom_symbol_offsets": []},
         }
         if references:
             metadata["attachments"] = [{
@@ -1222,31 +1206,27 @@ class OpenAIBackendAPI:
             "is_do_not_remember": False,
             "messages": [{
                 "id": new_uuid(),
-                "author": {"metadata": {}, "name": None, "role": "user"},
-                "channel": None,
+                "author": {"role": "user"},
                 "create_time": time.time(),
-                "end_turn": None,
                 "content": content,
                 "metadata": metadata,
-                "recipient": "all",
-                "status": "finished_successfully",
-                "update_time": None,
-                "weight": 1,
             }],
             "parent_message_id": "client-created-root",
             "model": self._image_model_slug(model),
             "client_prepare_state": "success",
-            "timezone_offset_min": -480,
-            "timezone": "Asia/Shanghai",
+            "timezone_offset_min": config.timezone_offset_min,
+            "timezone": config.timezone,
             "system_hints": ["picture_v2"],
             "supported_encodings": ["v1"],
-            "local_function_names": ["local.continue_in_work"],
-            "genui_state_snapshots": [],
             "client_contextual_info": {
+                "is_dark_mode": False,
+                "time_since_loaded": 1200,
+                "page_height": 1072,
+                "page_width": 1724,
+                "pixel_ratio": 1.2,
+                "screen_height": 1440,
+                "screen_width": 2560,
                 "app_name": "chatgpt.com",
-                "app_surface": "codex_browser",
-                "has_web_push_capabilities": True,
-                "web_push_notification_permission": "default",
             },
         }
         path = "/backend-api/f/conversation"
@@ -1493,7 +1473,7 @@ class OpenAIBackendAPI:
                 "file_name": file_name,
                 "file_size": len(data),
                 "use_case": "multimodal",
-                "timezone_offset_min": -480,
+                "timezone_offset_min": config.timezone_offset_min,
                 "reset_rate_limits": False,
                 "store_in_library": True,
                 "library_persistence_mode": "opportunistic",
@@ -1566,8 +1546,8 @@ class OpenAIBackendAPI:
             "parent_message_id": "client-created-root",
             "model": EDITABLE_FILE_MODEL,
             "client_prepare_state": "success",
-            "timezone_offset_min": -480,
-            "timezone": "Asia/Shanghai",
+            "timezone_offset_min": config.timezone_offset_min,
+            "timezone": config.timezone,
             "conversation_mode": {"kind": "primary_assistant"},
             "system_hints": [],
             "partial_query": {"id": new_uuid(), "author": {"role": "user"}, "content": {"content_type": "text", "parts": [prompt]}},
@@ -1634,8 +1614,8 @@ class OpenAIBackendAPI:
                 "parent_message_id": "client-created-root",
                 "model": EDITABLE_FILE_MODEL,
                 "client_prepare_state": "sent",
-                "timezone_offset_min": -480,
-                "timezone": "Asia/Shanghai",
+                "timezone_offset_min": config.timezone_offset_min,
+                "timezone": config.timezone,
                 "conversation_mode": {"kind": "primary_assistant"},
                 "enable_message_followups": True,
                 "system_hints": [],
@@ -2073,8 +2053,8 @@ class OpenAIBackendAPI:
                 "parent_message_id": "client-created-root",
                 "model": model,
                 "client_prepare_state": "success",
-                "timezone_offset_min": -480,
-                "timezone": "Asia/Shanghai",
+                "timezone_offset_min": config.timezone_offset_min,
+                "timezone": config.timezone,
                 "conversation_mode": {"kind": "primary_assistant"},
                 "system_hints": ["search"],
                 "partial_query": {"id": new_uuid(), "author": {"role": "user"}, "content": {"content_type": "text", "parts": [prompt]}},
@@ -2114,8 +2094,8 @@ class OpenAIBackendAPI:
                 "parent_message_id": "client-created-root",
                 "model": model,
                 "client_prepare_state": "success",
-                "timezone_offset_min": -480,
-                "timezone": "Asia/Shanghai",
+                "timezone_offset_min": config.timezone_offset_min,
+                "timezone": config.timezone,
                 "conversation_mode": {"kind": "primary_assistant"},
                 "enable_message_followups": True,
                 "system_hints": [],
@@ -2935,6 +2915,7 @@ class OpenAIBackendAPI:
         if self.pow_script_sources:
             return
         try:
+            self._sentinel_user_agent()
             headers = self._bootstrap_headers()
             headers["Authorization"] = None
             headers["Chatgpt-Account-Id"] = None
@@ -3033,7 +3014,7 @@ class OpenAIBackendAPI:
 
     def _chat_target(self) -> tuple[str, str]:
         if self.access_token:
-            return "/backend-api/conversation", "Asia/Shanghai"
+            return "/backend-api/conversation", config.timezone
         return "/backend-anon/conversation", "America/Los_Angeles"
 
     def list_models(self) -> Dict[str, Any]:

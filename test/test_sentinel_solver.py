@@ -157,6 +157,15 @@ class BackendSentinelTests(unittest.TestCase):
             self.assertEqual(api.pow_script_sources, ["https://chatgpt.com/backend-api/sentinel/sdk.js"])
 
 
+    def test_sentinel_user_agent_syncs_session_headers(self) -> None:
+        api = OpenAIBackendAPI(access_token="token")
+        with mock.patch.object(backend_module, "solver_user_agent", return_value="Mozilla/5.0 (X11; Linux x86_64)"):
+            ua = api._sentinel_user_agent()
+            self.assertEqual(ua, "Mozilla/5.0 (X11; Linux x86_64)")
+            self.assertEqual(api.session.headers["User-Agent"], "Mozilla/5.0 (X11; Linux x86_64)")
+            self.assertEqual(api.session.headers["Sec-Ch-Ua-Platform"], '"Linux"')
+
+
 class SentinelSolverConfigTests(unittest.TestCase):
     def test_env_overrides_config_and_key_is_hidden(self) -> None:
         env = {"CHATGPT2API_SENTINEL_SOLVER_URL": "http://env-solver:8080/", "CHATGPT2API_SENTINEL_SOLVER_KEY": "env-key"}
@@ -168,6 +177,16 @@ class SentinelSolverConfigTests(unittest.TestCase):
             public = config.get()
         self.assertEqual(public["sentinel_solver_url"], "http://env-solver:8080")
         self.assertNotIn("sentinel_solver_key", public)
+
+    def test_timezone_dynamic_offset(self) -> None:
+        with mock.patch.dict(os.environ, {"CHATGPT2API_TIMEZONE": "Asia/Tokyo"}):
+            self.assertEqual(config.timezone, "Asia/Tokyo")
+            self.assertEqual(config.timezone_offset_min, -540)
+        with mock.patch.dict(os.environ, {"CHATGPT2API_TIMEZONE": "Asia/Shanghai"}):
+            self.assertEqual(config.timezone, "Asia/Shanghai")
+            self.assertEqual(config.timezone_offset_min, -480)
+        with mock.patch.dict(os.environ, {"CHATGPT2API_TIMEZONE_OFFSET_MIN": "-500"}):
+            self.assertEqual(config.timezone_offset_min, -500)
 
 
 if __name__ == "__main__":

@@ -204,15 +204,20 @@ def require_key(authorization: str | None) -> None:
 
 @app.get("/health")
 async def health() -> dict[str, object]:
-    return solver.status()
+    st = solver.status()
+    print(f"[sentinel-solver] health check (ready={st.get('ready')})", flush=True)
+    return st
 
 
 @app.post("/v1/turnstile")
 async def solve_turnstile(body: TurnstileRequest, authorization: str | None = Header(default=None)) -> dict[str, str]:
     require_key(authorization)
+    print(f"[sentinel-solver] solving turnstile dx={body.dx[:20]}...", flush=True)
     try:
         token = await solver.evaluate("([dx, p]) => window.__sentinelVM.turnstile(dx, p)", [body.dx, body.p])
+        print(f"[sentinel-solver] turnstile solved (length={len(str(token or ''))})", flush=True)
     except Exception as exc:
+        print(f"[sentinel-solver] turnstile solve failed: {exc}", flush=True)
         raise HTTPException(status_code=503, detail=f"turnstile solve failed: {exc}") from exc
     return {"token": str(token or "")}
 
@@ -220,14 +225,17 @@ async def solve_turnstile(body: TurnstileRequest, authorization: str | None = He
 @app.post("/v1/so")
 async def solve_so(body: SORequest, authorization: str | None = Header(default=None)) -> dict[str, str]:
     require_key(authorization)
+    print(f"[sentinel-solver] solving so...", flush=True)
     try:
         token = await solver.evaluate(
             "([c, s, p]) => window.__sentinelVM.so(c, s, p)", [body.collector_dx, body.snapshot_dx, body.p]
         )
+        print(f"[sentinel-solver] so solved (length={len(str(token or ''))})", flush=True)
     except Exception as exc:
+        print(f"[sentinel-solver] so solve failed: {exc}", flush=True)
         raise HTTPException(status_code=503, detail=f"so solve failed: {exc}") from exc
     return {"token": str(token or "")}
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8080")), access_log=False)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8080")), access_log=True)

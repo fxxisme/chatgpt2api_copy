@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.9.10 - 2026-10-15
+
++ [修复] 支持动态时区：新增 `CHATGPT2API_TIMEZONE` / `SENTINEL_SOLVER_TIMEZONE` 环境变量配置，自动映射计算时区分钟偏移量（如 `Asia/Tokyo` 对应 `-540`），解决海外部署 IP 与时区冲突导致的 403 风控问题。
++ [修复] 移除生图请求中伪造的 `Codex Browser` 请求头、`app_surface` 及 `@创建图像 ` 前缀，还原为纯净的网页生图协议，避免被标记为异常活动（Unusual activity）。
++ [优化] 统一客户端请求头 UA 与 `sentinel-solver` 的无头 Chromium UA/平台指纹，保持 PoW 与 HTTP 链路一致。
++ [优化] `sentinel-solver` 开启请求与求解控制台日志（`access_log=True` 与端点日志），便于排查。
+
 ## 1.9.9 - 2026-10-15
 
 + [CI] 为 `chatgpt2api_copy-sentinel-solver` 镜像构建添加 QEMU 与 `linux/arm64` 多架构支持，解决 Oracle Cloud ARM64 等机器拉取缺失清单的问题。
