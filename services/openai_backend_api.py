@@ -62,10 +62,11 @@ class ChatRequirements:
 DEFAULT_CLIENT_VERSION = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
 DEFAULT_CLIENT_BUILD_NUMBER = "6708908"
 DEFAULT_POW_SCRIPT = "https://chatgpt.com/backend-api/sentinel/sdk.js"
-# 2026-10-14 起 Cloudflare 会对 chrome146/chrome136/chrome145 等部分 curl_cffi 指纹直接拦截 403
-# chrome124 / chrome120 可稳定通过 Cloudflare 并完成 PoW 与对话
-# 2026-10-15 更新：chrome124 也开始被拦截，改用 chrome131（较新且稳定）
-DEFAULT_IMPERSONATE = "chrome131"
+# 2026-10-15 实测 chatgpt.com 首页各指纹响应（curl_cffi 0.16.3，住宅 IP）：
+#   chrome124 -> 200   chrome142 -> 200   chrome150 -> 200
+#   chrome131 -> 403   chrome145 -> 403   chrome146 -> 403
+# 注意：被拦的是特定版本指纹，并非"越新越好"，chrome131 实测会被 403。
+DEFAULT_IMPERSONATE = "chrome124"
 LEGACY_IMPERSONATES = {
     "chrome146", "chrome145", "chrome136", "chrome133a",
     "chrome110", "chrome99", "chrome100", "chrome101", "chrome104", "chrome107",
@@ -210,8 +211,8 @@ class OpenAIBackendAPI:
             "Sec-Ch-Ua": self.fp["sec-ch-ua"],
             "Sec-Ch-Ua-Arch": '"x86"',
             "Sec-Ch-Ua-Bitness": '"64"',
-            "Sec-Ch-Ua-Full-Version": '"131.0.6778.140"',
-            "Sec-Ch-Ua-Full-Version-List": '"Chromium";v="131.0.6778.140", "Google Chrome";v="131.0.6778.140", "Not-A.Brand";v="99.0.0.0"',
+            "Sec-Ch-Ua-Full-Version": '"124.0.6367.207"',
+            "Sec-Ch-Ua-Full-Version-List": '"Chromium";v="124.0.6367.207", "Google Chrome";v="124.0.6367.207", "Not-A.Brand";v="99.0.0.0"',
             "Sec-Ch-Ua-Mobile": self.fp["sec-ch-ua-mobile"],
             "Sec-Ch-Ua-Model": '""',
             "Sec-Ch-Ua-Platform": self.fp["sec-ch-ua-platform"],
@@ -397,11 +398,11 @@ class OpenAIBackendAPI:
         fp.setdefault(
             "user-agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         )
         fp.setdefault("oai-device-id", new_uuid())
         fp.setdefault("oai-session-id", new_uuid())
-        fp.setdefault("sec-ch-ua", '"Chromium";v="131", "Google Chrome";v="131", "Not-A.Brand";v="99"')
+        fp.setdefault("sec-ch-ua", '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"')
         fp.setdefault("sec-ch-ua-mobile", "?0")
         fp.setdefault("sec-ch-ua-platform", '"Windows"')
         return fp
