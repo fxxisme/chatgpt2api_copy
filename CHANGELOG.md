@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-## 1.9.6 - 2026-10-15
+## 1.9.7 - 2026-10-15
+
++ [修复] 修复生图接口 `/backend-api/f/conversation` 返回 404 `Model not found`：移除生图 Payload 中冲突的文本流字段（`conversation_mode`、`supports_buffering`、`enable_message_followups`），对齐网页端 `@创建图像 ` 提及与 `ecosystemMention` 结构，补齐 Codex Browser 请求头与 oai-did Cookie。
++ [修复] 修复 `ensure_ok` 在非 2xx 流式响应下未消费流导致 `body=` 为空的错误呈现问题。
+
 
 + [修复] 默认 TLS 指纹回退为 chrome124；实测 chrome131/145/146 访问 chatgpt.com 首页返回 403，chrome124/142/150 返回 200。
 + [修复] 默认启用 sentinel-solver：对话与生图接口需要真实页面算出的 Turnstile，本地求解器对新挑战返回空，会导致 `/backend-api/f/conversation` 返回伪装的空 404。

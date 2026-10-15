@@ -221,11 +221,33 @@ class OpenAIBackendAPI:
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
             "OAI-Device-Id": self.device_id,
+            "oai-did": self.device_id,
             "OAI-Session-Id": self.session_id,
             "OAI-Language": "zh-CN",
             "OAI-Client-Version": self.client_version,
             "OAI-Client-Build-Number": self.client_build_number,
         })
+        if self.device_id:
+            try:
+                self.session.cookies.set("oai-did", self.device_id, domain=".chatgpt.com")
+                self.session.cookies.set("oai-did", self.device_id, domain="chatgpt.com")
+            except Exception:
+                pass
+        account_cookies = self.account.get("cookies")
+        if isinstance(account_cookies, dict):
+            for ck, cv in account_cookies.items():
+                try:
+                    self.session.cookies.set(str(ck), str(cv), domain=".chatgpt.com")
+                except Exception:
+                    pass
+        elif isinstance(account_cookies, str) and account_cookies:
+            for pair in account_cookies.split(";"):
+                if "=" in pair:
+                    ck, cv = pair.strip().split("=", 1)
+                    try:
+                        self.session.cookies.set(ck.strip(), cv.strip(), domain=".chatgpt.com")
+                    except Exception:
+                        pass
         if self.access_token:
             self.session.headers["Authorization"] = f"Bearer {self.access_token}"
         if self.account_id:
@@ -739,6 +761,11 @@ class OpenAIBackendAPI:
             "Content-Type": "application/json",
             "Accept": accept,
             "OpenAI-Sentinel-Chat-Requirements-Token": requirements.token,
+            "originator": "Codex Browser",
+            "x-openai-web-frontend": "codex_webview",
+            "x-openai-codex-window-type": "browser",
+            "x-openai-web-sse-compression": "gzip",
+            "x-oai-mcp-form-version": "2",
         }
         if requirements.proof_token:
             headers["OpenAI-Sentinel-Proof-Token"] = requirements.proof_token
@@ -748,6 +775,8 @@ class OpenAIBackendAPI:
             headers["OpenAI-Sentinel-SO-Token"] = requirements.so_token
         if conduit_token:
             headers["X-Conduit-Token"] = conduit_token
+        else:
+            headers["X-Conduit-Token"] = "no-token"
         if accept == "text/event-stream":
             headers["X-Oai-Turn-Trace-Id"] = new_uuid()
         return self._headers(path, headers)
@@ -1037,6 +1066,13 @@ class OpenAIBackendAPI:
     def _prepare_image_conversation(self, prompt: str, requirements: ChatRequirements, model: str) -> str:
         """为图片生成准备 conduit token。"""
         path = "/backend-api/f/conversation/prepare"
+        mention = "@创建图像 "
+        if not prompt.startswith("@创建图像"):
+            prefixed_prompt = f"{mention}{prompt}"
+        elif not prompt.startswith("@创建图像 "):
+            prefixed_prompt = f"@创建图像 {prompt[len('@创建图像'):]}"
+        else:
+            prefixed_prompt = prompt
         payload = {
             "turn_attribution": {"turn_trigger": "composer"},
             "action": "next",
@@ -1047,16 +1083,17 @@ class OpenAIBackendAPI:
             "client_prepare_state": "success",
             "timezone_offset_min": -480,
             "timezone": "Asia/Shanghai",
-            "conversation_mode": {"kind": "primary_assistant"},
             "system_hints": ["picture_v2"],
             "partial_query": {
                 "id": new_uuid(),
                 "author": {"role": "user"},
-                "content": {"content_type": "text", "parts": [prompt]},
+                "content": {"content_type": "text", "parts": [prefixed_prompt]},
             },
-            "supports_buffering": True,
             "supported_encodings": ["v1"],
-            "client_contextual_info": {"app_name": "chatgpt.com"},
+            "client_contextual_info": {
+                "app_name": "chatgpt.com",
+                "app_surface": "codex_browser",
+            },
         }
         response = self.session.post(
             self.base_url + path,
@@ -1152,15 +1189,27 @@ class OpenAIBackendAPI:
             "height": item["height"],
             "size_bytes": item["file_size"],
         } for item in references]
-        parts.append(prompt)
+        mention = "@创建图像 "
+        if not prompt.startswith("@创建图像"):
+            prefixed_prompt = f"{mention}{prompt}"
+        elif not prompt.startswith("@创建图像 "):
+            prefixed_prompt = f"@创建图像 {prompt[len('@创建图像'):]}"
+        else:
+            prefixed_prompt = prompt
+        parts.append(prefixed_prompt)
         content = {"content_type": "multimodal_text", "parts": parts} if references else {"content_type": "text",
-                                                                                          "parts": [prompt]}
+                                                                                          "parts": [prefixed_prompt]}
         metadata = {
-            "developer_mode_connector_ids": [],
-            "selected_github_repos": [],
-            "selected_all_github_repos": False,
             "system_hints": ["picture_v2"],
-            "serialization_metadata": {"custom_symbol_offsets": []},
+            "serialization_metadata": {
+                "render_format": "markdown",
+                "custom_symbol_offsets": [{
+                    "id": "picture_v2",
+                    "symbol": "ecosystemMention",
+                    "startIndex": 0,
+                    "endIndex": 5,
+                }],
+            },
         }
         if references:
             metadata["attachments"] = [{
@@ -1177,33 +1226,32 @@ class OpenAIBackendAPI:
             "is_do_not_remember": False,
             "messages": [{
                 "id": new_uuid(),
-                "author": {"role": "user"},
+                "author": {"metadata": {}, "name": None, "role": "user"},
+                "channel": None,
                 "create_time": time.time(),
+                "end_turn": None,
                 "content": content,
                 "metadata": metadata,
+                "recipient": "all",
+                "status": "finished_successfully",
+                "update_time": None,
+                "weight": 1,
             }],
             "parent_message_id": "client-created-root",
             "model": self._image_model_slug(model),
             "client_prepare_state": "success",
             "timezone_offset_min": -480,
             "timezone": "Asia/Shanghai",
-            "conversation_mode": {"kind": "primary_assistant"},
-            "enable_message_followups": True,
             "system_hints": ["picture_v2"],
-            "supports_buffering": True,
             "supported_encodings": ["v1"],
+            "local_function_names": ["local.continue_in_work"],
+            "genui_state_snapshots": [],
             "client_contextual_info": {
-                "is_dark_mode": False,
-                "time_since_loaded": 1200,
-                "page_height": 1072,
-                "page_width": 1724,
-                "pixel_ratio": 1.2,
-                "screen_height": 1440,
-                "screen_width": 2560,
                 "app_name": "chatgpt.com",
+                "app_surface": "codex_browser",
+                "has_web_push_capabilities": True,
+                "web_push_notification_permission": "default",
             },
-            "paragen_cot_summary_display_override": "allow",
-            "force_parallel_switch": "auto",
         }
         path = "/backend-api/f/conversation"
         response = self.session.post(
