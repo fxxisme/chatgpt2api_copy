@@ -1093,6 +1093,8 @@ class OpenAIBackendAPI:
             json=payload,
             timeout=self._deadline_timeout_secs(60),
         )
+        if response.status_code in (403, 503):
+            self._drop_cloudflare_cookies()
         ensure_ok(response, path)
         return response.json().get("conduit_token", "")
 
@@ -1244,6 +1246,8 @@ class OpenAIBackendAPI:
             if response.status_code == 404 and attempt < max_attempts:
                 time.sleep(1.0)
                 continue
+            if response.status_code in (403, 503):
+                self._drop_cloudflare_cookies()
             ensure_ok(response, path)
             return response
 
@@ -2813,6 +2817,8 @@ class OpenAIBackendAPI:
                 timeout=self._deadline_timeout_secs(TEXT_STREAM_TIMEOUT_SECS),
                 stream=True,
             )
+            if response.status_code in (403, 503):
+                self._drop_cloudflare_cookies()
             ensure_ok(response, path)
             try:
                 yield from iter_sse_payloads(
@@ -2910,15 +2916,44 @@ class OpenAIBackendAPI:
                 except Exception:
                     pass
 
+    def _drop_cookie(self, name: str) -> None:
+        """从 session 中清除指定名称的 cookie。"""
+        try:
+            jar = getattr(self.session.cookies, "jar", None)
+            if jar is not None:
+                for cookie in list(jar):
+                    if cookie.name == name:
+                        jar.clear(cookie.domain, cookie.path, cookie.name)
+            else:
+                self.session.cookies.pop(name, None)
+        except Exception:
+            pass
+
+    def _drop_cloudflare_cookies(self) -> None:
+        """清除 session 中所有 Cloudflare 相关的 cookie，避免污染后续请求。"""
+        try:
+            jar = getattr(self.session.cookies, "jar", None)
+            if jar is not None:
+                for cookie in list(jar):
+                    if cookie.name.startswith(("__cf", "cf_")):
+                        jar.clear(cookie.domain, cookie.path, cookie.name)
+            else:
+                for key in list(self.session.cookies.keys()):
+                    if key.startswith(("__cf", "cf_")):
+                        self.session.cookies.pop(key, None)
+        except Exception:
+            pass
+
     def _bootstrap(self) -> None:
         """预热首页，并提取 PoW 相关脚本引用。即使失败也不阻断主业务流程。"""
         if self.pow_script_sources:
             return
+        # 首页预热绝对不能携带 Authorization 或 chatgpt-account-id，避免被 Cloudflare 拦截
+        auth = self.session.headers.pop("Authorization", None)
+        account_id = self.session.headers.pop("chatgpt-account-id", None)
         try:
             self._sentinel_user_agent()
             headers = self._bootstrap_headers()
-            headers["Authorization"] = None
-            headers["Chatgpt-Account-Id"] = None
             response = self.session.get(
                 self.base_url + "/",
                 headers=headers,
@@ -2930,6 +2965,8 @@ class OpenAIBackendAPI:
                     self.client_version = self.pow_data_build
                     self.session.headers["OAI-Client-Version"] = self.pow_data_build
             else:
+                if response.status_code in (403, 429, 503):
+                    self._drop_cloudflare_cookies()
                 # 记录详细错误信息，方便排查 Cloudflare 拦截等问题
                 body_preview = response.text[:500] if hasattr(response, "text") else str(response.content[:500])
                 logger.warning({
@@ -2940,11 +2977,16 @@ class OpenAIBackendAPI:
                     "impersonate": self.fp.get("impersonate"),
                 })
         except Exception as exc:
+            self._drop_cloudflare_cookies()
             logger.warning({
                 "event": "bootstrap_failed",
                 "error": str(exc),
             })
         finally:
+            if auth is not None:
+                self.session.headers["Authorization"] = auth
+            if account_id is not None:
+                self.session.headers["chatgpt-account-id"] = account_id
             if not self.pow_script_sources:
                 self.pow_script_sources = [DEFAULT_POW_SCRIPT]
 
@@ -2961,6 +3003,8 @@ class OpenAIBackendAPI:
             json={"p": p_token},
             timeout=self._deadline_timeout_secs(30),
         )
+        if response.status_code in (403, 503):
+            self._drop_cloudflare_cookies()
         ensure_ok(response, "chat_requirements_prepare")
         prepare_data = response.json()
 
@@ -2996,8 +3040,13 @@ class OpenAIBackendAPI:
             json=finalize_payload,
             timeout=self._deadline_timeout_secs(30),
         )
+        if response.status_code in (403, 503):
+            self._drop_cloudflare_cookies()
         ensure_ok(response, "chat_requirements_finalize")
         data = response.json()
+
+        # 清除 finalize 阶段被下发的 oai-sc cookie，避免会话受限触发 404
+        self._drop_cookie("oai-sc")
 
         token = data.get("token", "")
         if not token:

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.9.11 - 2026-10-16
+
++ [修复] 剥离 Sentinel 限制性 Cookie：在 `/sentinel/chat-requirements/finalize` 响应后立即清除 `oai-sc` Cookie，防止会话被标记为受限模式导致偶发 404 `Model not found`。
++ [优化] 首页预热原子级脱敏：在 `_bootstrap` 访问 `chatgpt.com/` 时原子弹出 `Authorization` 与 `chatgpt-account-id`，杜绝带登录态预热触发 Cloudflare 403 质询。
++ [优化] Cloudflare 脏状态清洗：各关键端点遭遇 403/503 时自动清理 `__cf*` 与 `cf_*` 残留 Cookie 并退避，防止脏状态污染会话导致后续 `Unusual activity`。
+
 ## 1.9.10 - 2026-10-15
 
 + [修复] 支持动态时区：新增 `CHATGPT2API_TIMEZONE` / `SENTINEL_SOLVER_TIMEZONE` 环境变量配置，自动映射计算时区分钟偏移量（如 `Asia/Tokyo` 对应 `-540`），解决海外部署 IP 与时区冲突导致的 403 风控问题。

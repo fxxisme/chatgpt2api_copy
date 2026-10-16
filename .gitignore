@@ -36,3 +36,6 @@ test_batch_output/
 
 # Local CodeGraph index
 .codegraph/
+
+# Scratch workspace
+scratch/
