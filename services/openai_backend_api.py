@@ -426,7 +426,11 @@ class OpenAIBackendAPI:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         )
-        fp.setdefault("oai-device-id", new_uuid())
+        if not fp.get("oai-device-id"):
+            did = str(account.get("oai-device-id") or account.get("oai_device_id") or "").strip() or new_uuid()
+            fp["oai-device-id"] = did
+            if isinstance(account, dict):
+                account["oai-device-id"] = did
         fp.setdefault("oai-session-id", new_uuid())
         fp.setdefault("sec-ch-ua", '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"')
         fp.setdefault("sec-ch-ua-mobile", "?0")
@@ -2886,7 +2890,12 @@ class OpenAIBackendAPI:
         if not self.access_token:
             raise RuntimeError("access_token is required for image endpoints")
         self._report_progress("uploading")
-        references = [self._upload_image(image, f"image_{idx}.png") for idx, image in enumerate(images, start=1)]
+        if len(images) > 1:
+            with ThreadPoolExecutor(max_workers=min(len(images), 4)) as executor:
+                futures = [executor.submit(self._upload_image, image, f"image_{idx}.png") for idx, image in enumerate(images, start=1)]
+                references = [f.result() for f in futures]
+        else:
+            references = [self._upload_image(images[0], "image_1.png")] if images else []
         self._report_progress("bootstrapping")
         self._bootstrap()
         self._report_progress("getting_token")

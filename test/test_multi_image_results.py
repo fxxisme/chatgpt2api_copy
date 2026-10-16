@@ -592,5 +592,84 @@ class MultiImageResultTests(unittest.TestCase):
         self.assertEqual(backend.session.get.call_count, 3)
 
 
+    def test_account_device_id_persistence(self) -> None:
+        from services.account_service import account_service
+        raw_account = {"access_token": "token-test-123", "status": "正常", "quota": 5}
+        norm1 = account_service._normalize_account(raw_account)
+        self.assertIsNotNone(norm1)
+        device_id_1 = norm1.get("oai-device-id")
+        self.assertTrue(bool(device_id_1))
+
+        # Re-normalizing should preserve the exact same device-id
+        norm2 = account_service._normalize_account(norm1)
+        self.assertEqual(norm2.get("oai-device-id"), device_id_1)
+
+    def test_get_available_access_token_fast_path_skips_remote_info(self) -> None:
+        from services.account_service import account_service
+        test_token = "token-fastpath-test"
+        account_service._accounts[test_token] = {
+            "access_token": test_token,
+            "status": "正常",
+            "quota": 3,
+            "type": "free",
+            "source_type": "web",
+            "oai-device-id": "did-123",
+        }
+        account_service._image_inflight.clear()
+        account_service._image_cooldown_until.clear()
+
+        with mock.patch.object(account_service, "fetch_remote_info") as mock_fetch, \
+             mock.patch.object(account_service, "refresh_access_token", return_value=test_token):
+            token = account_service.get_available_access_token(plan_type="free")
+            self.assertEqual(token, test_token)
+            mock_fetch.assert_not_called()
+        account_service._accounts.pop(test_token, None)
+        account_service._image_inflight.clear()
+
+    def test_task_error_query_skipped_when_polling_image(self) -> None:
+        backend = FakeBackend()
+        backend.session = mock.Mock()
+        request = ConversationRequest(prompt="draw a sunset", model="dall-e-3")
+
+        # Generator returns an event with turn_use_case="image gen", tool_invoked=True, no direct file_ids
+        fake_events = [
+            {"turn_use_case": "image gen", "tool_invoked": True, "conversation_id": "conv-test", "message": "", "file_ids": [], "sediment_ids": []}
+        ]
+        with mock.patch("services.protocol.conversation.conversation_events", return_value=iter(fake_events)), \
+             mock.patch("services.protocol.conversation._get_detailed_error_from_tasks") as mock_task_query, \
+             mock.patch.object(backend, "_poll_image_results", return_value=(["file-1"], [])):
+            outputs = list(stream_image_outputs(backend, request))
+            mock_task_query.assert_not_called()
+
+    def test_generate_single_image_releases_slot_on_generator_exit(self) -> None:
+        from services.account_service import account_service
+        test_token = "token-slot-test"
+        account_service._accounts[test_token] = {
+            "access_token": test_token,
+            "status": "正常",
+            "quota": 2,
+            "type": "free",
+            "source_type": "web",
+        }
+        account_service._image_inflight.clear()
+
+        request = ConversationRequest(prompt="test prompt", model="dall-e-3")
+
+        def _mock_stream(*args, **kwargs):
+            raise GeneratorExit()
+
+        with mock.patch.object(account_service, "get_available_access_token", return_value=test_token), \
+             mock.patch("services.protocol.conversation.stream_image_outputs", side_effect=_mock_stream):
+            # Simulate generator abortion
+            with self.assertRaises(GeneratorExit):
+                _generate_single_image(request, 1, 1)
+
+            # Slot must be released (inflight count <= 0)
+            self.assertEqual(int(account_service._image_inflight.get(test_token, 0)), 0)
+
+        account_service._accounts.pop(test_token, None)
+        account_service._image_inflight.clear()
+
+
 if __name__ == "__main__":
     unittest.main()

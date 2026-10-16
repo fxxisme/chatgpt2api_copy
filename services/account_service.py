@@ -240,6 +240,10 @@ class AccountService:
         normalized["last_token_refresh_at"] = normalized.get("last_token_refresh_at") or None
         normalized["last_token_refresh_error"] = normalized.get("last_token_refresh_error") or None
         normalized["last_token_refresh_error_at"] = normalized.get("last_token_refresh_error_at") or None
+        device_id = str(normalized.get("oai-device-id") or normalized.get("oai_device_id") or "").strip()
+        if not device_id:
+            device_id = str(uuid.uuid4())
+        normalized["oai-device-id"] = device_id
         normalized["created_at"] = normalized.get("created_at") or AccountService._now()
         return normalized
 
@@ -983,6 +987,19 @@ class AccountService:
                 plan_types=plan_types,
             )
             attempted_tokens.add(access_token)
+            account = self.get_account(access_token)
+            # 本地已核验且有可用配额，直接复用本地状态，无需每次生图发起 3 次远程元数据请求
+            # 既消除 1.5s~3s 耗时，又避免频繁请求 /me、/conversation/init 诱发风控
+            if (
+                    account
+                    and self._is_image_account_available(account)
+                    and self._account_matches_plan_type(account, plan_type)
+                    and self._account_matches_any_plan_type(account, plan_types)
+                    and self._account_matches_source_type(account, source_type)
+            ):
+                refreshed = self.refresh_access_token(access_token, event="get_available_access_token")
+                return refreshed or str(account.get("access_token") or access_token)
+
             try:
                 account = self.fetch_remote_info(access_token, "get_available_access_token")
             except Exception:

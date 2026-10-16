@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.9.13 - 2026-10-16
+
++ [风控] 账号设备指纹持久化：为每个账号固定生成并持久化唯一 `oai-device-id`，模拟真实浏览器长期使用习惯，杜绝每次请求生成新设备指纹诱发 Sentinel 风控。
++ [性能] 消除生图冗余远程预检：`get_available_access_token` 复用本地已核验的配额与状态，消除生图前无条件请求 `/me`、`/conversation/init`、`/accounts/check` 的 3 次冗余网络往返，生图首包立减 1.5s ~ 3.0s。
++ [性能] 消除轮询前 1.0 秒休眠与无效 Tasks 检查：合法生图任务直接进入图片轮询，消除 `_get_detailed_error_from_tasks` 的硬编码 1s 等待与冗余网络请求。
++ [稳定性] 修复客户端断开连接时的并发槽位永久泄漏：在 `finally` 块中通过状态跟踪安全释放 `release_image_slot`，防止因 `GeneratorExit` 导致账号槽位泄漏而永久假死。
++ [稳定性] 修复会话异步清理竞态：后台线程使用独立 Session 执行会话删除，消除与主线程 `backend.close()` 冲突导致的连接关闭异常。
++ [性能] 图生图参考图并行并发上传：多参考图时使用 `ThreadPoolExecutor` 并发上传。
+
 ## 1.9.12 - 2026-10-16
 
 + [优化] 生图性能全链路提速：

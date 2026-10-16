@@ -838,10 +838,48 @@ def _remove_image_conversation_later(backend: OpenAIBackendAPI, conversation_id:
     if not config.image_remove_conversation_after_result or not conversation_id:
         return
 
+    access_token = backend.access_token
+    base_url = backend.base_url
+    account = dict(backend.account) if isinstance(backend.account, dict) else {}
+    fp = dict(backend.fp) if isinstance(backend.fp, dict) else {}
+
     def _run() -> None:
         try:
-            backend.delete_conversation(conversation_id)
-            logger.info({"event": "image_conversation_removed", "conversation_id": conversation_id})
+            from curl_cffi import requests
+            from services.proxy_service import proxy_settings
+            session = requests.Session(**proxy_settings.build_session_kwargs(
+                account=account,
+                impersonate=fp.get("impersonate", "chrome124"),
+                verify=True,
+            ))
+            path = f"/backend-api/conversation/{conversation_id}"
+            headers = {
+                "Accept": "*/*",
+                "Content-Type": "application/json",
+                "Origin": base_url,
+                "Referer": f"{base_url}/c/{conversation_id}",
+                "User-Agent": fp.get("user-agent", ""),
+                "OAI-Device-Id": fp.get("oai-device-id", ""),
+                "X-OpenAI-Target-Route": "/backend-api/conversation/{conversation_id}",
+            }
+            if access_token:
+                headers["Authorization"] = f"Bearer {access_token}"
+            account_id = str(account.get("account_id") or "").strip()
+            if account_id:
+                headers["chatgpt-account-id"] = account_id
+            try:
+                response = session.patch(
+                    base_url + path,
+                    headers=headers,
+                    json={"is_visible": False},
+                    timeout=30,
+                )
+                if response.status_code < 400:
+                    logger.info({"event": "image_conversation_removed", "conversation_id": conversation_id})
+                else:
+                    logger.warning({"event": "image_conversation_remove_failed", "conversation_id": conversation_id, "status": response.status_code})
+            finally:
+                session.close()
         except Exception as exc:
             logger.warning({
                 "event": "image_conversation_remove_failed",
@@ -962,13 +1000,11 @@ def stream_image_outputs(
     # 在轮询图片之前，先检查 /backend-api/tasks/ 是否有 moderation 拦截
     # 这样可以避免不必要的长时间轮询超时
     # 注意：当 should_poll_for_image 为 True 或检测到文本回复时，
-    # 即使 tasks 报告了"错误"，也不能直接返回——因为上游可能将工具调用的 JSON 参数
-    # （如 {"size":"1792x1024","n":1}）标记为 is_error，而实际上图片正在异步生成中。
-    # 此时应继续轮询图片。
+    # 无论 tasks 是否报错都应直接进入轮询，因此跳过冗余的 1.0 秒等待与查询，直接提速
     detailed_error = ""
-    if not file_ids and not sediment_ids and conversation_id:
+    if not file_ids and not sediment_ids and conversation_id and not should_poll_for_image and not is_text_reply:
         detailed_error = _get_detailed_error_from_tasks(backend, conversation_id, timeout_secs=5.0, wait_secs=1.0)
-        if detailed_error and not should_poll_for_image and not is_text_reply:
+        if detailed_error:
             logger.info({
                 "event": "image_task_error_before_poll",
                 "conversation_id": conversation_id,
@@ -976,12 +1012,6 @@ def stream_image_outputs(
             })
             yield ImageOutput(kind="message", model=request.model, index=index, total=total, text=detailed_error, conversation_id=conversation_id)
             return
-        if detailed_error and (should_poll_for_image or is_text_reply):
-            logger.info({
-                "event": "image_task_error_skipped_for_poll",
-                "conversation_id": conversation_id,
-                "error": detailed_error,
-            })
 
     # 当检测到文本回复（含 referenced_image_ids）时，使用更长的超时来轮询图片结果。
     # 因为上游可能将图片生成作为异步任务执行，SSE 流在工具完成前就断开了，
@@ -1366,6 +1396,7 @@ def _generate_single_image(
                 source_type="codex" if codex_model else None,
                 plan_types=("plus", "team", "pro") if codex_model and not plan_type else None,
             )
+            slot_released = False
         except RuntimeError as exc:
             raise ImageGenerationError(str(exc) or "image generation failed", account_email=account_email) from exc
 
@@ -1407,9 +1438,11 @@ def _generate_single_image(
                 outputs.append(output)
             if returned_message:
                 account_service.mark_image_result(token, False)
+                slot_released = True
                 return outputs
             if not returned_result:
                 account_service.mark_image_result(token, False)
+                slot_released = True
                 if emitted_for_token:
                     conv_id = outputs[-1].conversation_id if outputs else ""
                     raise ImageGenerationError(
@@ -1422,9 +1455,11 @@ def _generate_single_image(
                     )
                 return outputs
             account_service.mark_image_result(token, True)
+            slot_released = True
             return outputs
         except ImagePollTimeoutError as exc:
             account_service.mark_image_result(token, False)
+            slot_released = True
             if account_email:
                 setattr(exc, "account_email", account_email)
             # 轮询超时：换账号重试
@@ -1451,6 +1486,7 @@ def _generate_single_image(
             raise
         except ImageContentPolicyError as exc:
             account_service.mark_image_result(token, False)
+            slot_released = True
             logger.warning({
                 "event": "image_stream_content_policy_error",
                 "request_token": token,
@@ -1468,6 +1504,7 @@ def _generate_single_image(
             ) from exc
         except ImageGenerationError as exc:
             account_service.mark_image_result(token, False)
+            slot_released = True
             if account_email and not getattr(exc, "account_email", ""):
                 exc.account_email = account_email
             error_text = str(exc)
@@ -1513,6 +1550,7 @@ def _generate_single_image(
                 isinstance(exc, ImageStreamHardTimeoutError) or is_image_concurrency_error(exc)
             ) else 0.0
             account_service.mark_image_result(token, False, cooldown_secs=cooldown_secs)
+            slot_released = True
             last_error = str(exc)
             logger.warning({
                 "event": "image_stream_fail",
@@ -1577,6 +1615,8 @@ def _generate_single_image(
                     continue
             raise ImageGenerationError(image_stream_error_message(last_error), account_email=account_email, conversation_id="") from exc
         finally:
+            if not slot_released and token:
+                account_service.release_image_slot(token)
             if backend is not None:
                 backend.close()
 
