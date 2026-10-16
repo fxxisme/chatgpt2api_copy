@@ -167,6 +167,27 @@ function displayAccountSource(account: Account) {
 
 function AccountsPageContent() {
   const didLoadRef = useRef(false);
+  const activeTimersRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
+
+  useEffect(() => {
+    const timers = activeTimersRef.current;
+    return () => {
+      timers.forEach((t) => clearInterval(t));
+      timers.clear();
+    };
+  }, []);
+
+  const startInterval = (callback: () => void | Promise<void>, ms: number) => {
+    const timer = setInterval(callback, ms);
+    activeTimersRef.current.add(timer);
+    return timer;
+  };
+
+  const clearRegisteredInterval = (timer: ReturnType<typeof setInterval>) => {
+    clearInterval(timer);
+    activeTimersRef.current.delete(timer);
+  };
+
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [availableModels, setAvailableModels] = useState<Model[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -384,11 +405,11 @@ function AccountsPageContent() {
 
       // 轮询进度到完成
       const data = await new Promise<AccountRefreshResponse>((resolve, reject) => {
-        const pollTimer = setInterval(async () => {
+        const pollTimer = startInterval(async () => {
           try {
             const p = await fetchRefreshProgress(progress_id);
             if (p.done) {
-              clearInterval(pollTimer);
+              clearRegisteredInterval(pollTimer);
               if (p.error) {
                 reject(new Error(p.error));
                 return;
@@ -427,10 +448,10 @@ function AccountsPageContent() {
               });
             }
           } catch (err) {
-            clearInterval(pollTimer);
+            clearRegisteredInterval(pollTimer);
             reject(err);
           }
-        }, 300);
+        }, 800);
       });
 
       // 刷新完成，更新数据
@@ -504,11 +525,11 @@ function AccountsPageContent() {
     onUpdate: (p: RefreshProgressResponse) => void,
   ): Promise<void> => {
     return new Promise<void>((resolve, reject) => {
-      const timer = setInterval(async () => {
+      const timer = startInterval(async () => {
         try {
           const p = await fetchRefreshProgress(progressId);
           if (p.done) {
-            clearInterval(timer);
+            clearRegisteredInterval(timer);
             if (p.error) {
               reject(new Error(p.error));
             } else {
@@ -517,10 +538,10 @@ function AccountsPageContent() {
             }
           }
         } catch (err) {
-          clearInterval(timer);
+          clearRegisteredInterval(timer);
           reject(err);
         }
-      }, 500);
+      }, 800);
     });
   };
 
@@ -564,11 +585,11 @@ function AccountsPageContent() {
 
       // 轮询进度到完成
       await new Promise<void>((resolve, reject) => {
-        const pollTimer = setInterval(async () => {
+        const pollTimer = startInterval(async () => {
           try {
             const p = await fetchReLoginProgress(progress_id);
             if (p.done) {
-              clearInterval(pollTimer);
+              clearRegisteredInterval(pollTimer);
               if (p.error) {
                 reject(new Error(p.error));
                 return;
@@ -615,10 +636,10 @@ function AccountsPageContent() {
               });
             }
           } catch (err) {
-            clearInterval(pollTimer);
+            clearRegisteredInterval(pollTimer);
             reject(err);
           }
-        }, 300);
+        }, 800);
       });
 
       // 等待后台线程完成，再拉取最新数据

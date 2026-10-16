@@ -167,6 +167,8 @@ export type SettingsConfig = {
   refresh_account_interval_minute?: number | string;
   image_retention_days?: number | string;
   image_poll_timeout_secs?: number | string;
+  image_poll_initial_wait_secs?: number | string;
+  image_poll_interval_secs?: number | string;
   image_account_concurrency?: number | string;
   default_image_model?: string;
   custom_image_models?: string[];

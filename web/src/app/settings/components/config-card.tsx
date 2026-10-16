@@ -27,6 +27,8 @@ export function ConfigCard() {
   const setRefreshAccountIntervalMinute = useSettingsStore((state) => state.setRefreshAccountIntervalMinute);
   const setImageRetentionDays = useSettingsStore((state) => state.setImageRetentionDays);
   const setImagePollTimeoutSecs = useSettingsStore((state) => state.setImagePollTimeoutSecs);
+  const setImagePollInitialWaitSecs = useSettingsStore((state) => state.setImagePollInitialWaitSecs);
+  const setImagePollIntervalSecs = useSettingsStore((state) => state.setImagePollIntervalSecs);
   const setImageAccountConcurrency = useSettingsStore((state) => state.setImageAccountConcurrency);
   const setDefaultImageModel = useSettingsStore((state) => state.setDefaultImageModel);
   const setImageSettleEnabled = useSettingsStore((state) => state.setImageSettleEnabled);
@@ -192,6 +194,26 @@ export function ConfigCard() {
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
             <p className="text-xs text-stone-500">单位秒，等待上游图片结果的最长时间。</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">生图初次等待 (秒)</label>
+            <Input
+              value={String(config?.image_poll_initial_wait_secs ?? "")}
+              onChange={(event) => setImagePollInitialWaitSecs(event.target.value)}
+              placeholder="6.0"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">发起生图后首次轮询前的静默等待时长，默认 6 秒。</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">生图轮询间隔 (秒)</label>
+            <Input
+              value={String(config?.image_poll_interval_secs ?? "")}
+              onChange={(event) => setImagePollIntervalSecs(event.target.value)}
+              placeholder="5.0"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+            <p className="text-xs text-stone-500">未出图时各次轮询之间的检查间隔，默认 5 秒。</p>
           </div>
           <div className="space-y-2">
             <label className="text-sm text-stone-700">单账号图片并发</label>

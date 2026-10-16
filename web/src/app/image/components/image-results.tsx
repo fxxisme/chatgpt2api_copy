@@ -32,17 +32,33 @@ type ImageResultsProps = {
 };
 
 // Blob URL 缓存：避免 base64 超长字符串在 DOM 中，改用短小的 blob: URL
+// 限制最大容量，采用 LRU 淘汰机制，并在淘汰时调用 revokeObjectURL 释放浏览器内存
+const MAX_BLOB_CACHE_SIZE = 50;
 const b64BlobUrlCache = new Map<string, string>();
 
 function getStoredImageSrc(image: StoredImage) {
   if (image.b64_json) {
     let url = b64BlobUrlCache.get(image.b64_json);
     if (!url) {
+      if (b64BlobUrlCache.size >= MAX_BLOB_CACHE_SIZE) {
+        const oldestKey = b64BlobUrlCache.keys().next().value;
+        if (oldestKey) {
+          const oldUrl = b64BlobUrlCache.get(oldestKey);
+          if (oldUrl) {
+            URL.revokeObjectURL(oldUrl);
+          }
+          b64BlobUrlCache.delete(oldestKey);
+        }
+      }
       const binary = atob(image.b64_json);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
       const blob = new Blob([bytes], { type: "image/png" });
       url = URL.createObjectURL(blob);
+      b64BlobUrlCache.set(image.b64_json, url);
+    } else {
+      // 命中时更新为最新活跃
+      b64BlobUrlCache.delete(image.b64_json);
       b64BlobUrlCache.set(image.b64_json, url);
     }
     return url;
