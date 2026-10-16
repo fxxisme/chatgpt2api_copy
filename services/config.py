@@ -460,19 +460,19 @@ class ConfigStore:
     @property
     def image_poll_interval_secs(self) -> float:
         try:
-            return max(0.5, float(self.data.get("image_poll_interval_secs", 10.0)))
+            return max(0.5, float(self.data.get("image_poll_interval_secs", 5.0)))
         except (TypeError, ValueError):
-            return 10.0
+            return 5.0
 
     @property
     def image_poll_initial_wait_secs(self) -> float:
         """Image generation upstream takes ~30s; polling immediately wastes requests
-        and trips a transient 429. Default 10s gives the conversation document time
+        and trips a transient 429. Default gives the conversation document time
         to commit before the first poll."""
         try:
-            return max(0.0, float(self.data.get("image_poll_initial_wait_secs", 10.0)))
+            return max(0.0, float(self.data.get("image_poll_initial_wait_secs", 6.0)))
         except (TypeError, ValueError):
-            return 10.0
+            return 6.0
 
     @property
     def image_timeout_retry_secs(self) -> int:
@@ -550,9 +550,9 @@ class ConfigStore:
     def image_settle_secs(self) -> float:
         """二次确认等待时间（秒）。"""
         try:
-            return max(0.5, float(self.data.get("image_settle_secs", 2.0)))
+            return max(0.5, float(self.data.get("image_settle_secs", 1.0)))
         except (TypeError, ValueError):
-            return 2.0
+            return 1.0
 
     @property
     def auto_remove_invalid_accounts(self) -> bool:

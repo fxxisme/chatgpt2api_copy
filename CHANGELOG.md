@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.9.12 - 2026-10-16
+
++ [优化] 生图性能全链路提速：
+  - 全局内存级缓存 `_bootstrap` 预热资源（TTL 1小时），消除重复请求首页抓取带来的 1~2.5 秒延迟。
+  - 优化生图轮询节奏：采用阶梯式短轮询（2.5s -> 3.5s -> 4.5s...），默认初始等待降至 6s，出图后可在 1~2 秒内立即感知，平均提速 4~8 秒。
+  - 并发下载与解析：引入 `ThreadPoolExecutor` 并行解析下载 URL 与下载图片二进制，提升多图及附件处理效率。
++ [修复] 生图误判超时：处理上游未调用生图工具（`tool_invoked: false`）或纯文本回复时立即返回，避免死等 10 分钟。
++ [运维] 默认恢复单容器轻量部署，将 `sentinel-solver` 设为可选配置并补充详细运维文档 `docs/sentinel-solver.md`。
+
 ## 1.9.11 - 2026-10-16
 
 + [修复] 剥离 Sentinel 限制性 Cookie：在 `/sentinel/chat-requirements/finalize` 响应后立即清除 `oai-sc` Cookie，防止会话被标记为受限模式导致偶发 404 `Model not found`。

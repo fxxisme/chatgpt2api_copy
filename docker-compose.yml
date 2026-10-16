@@ -28,21 +28,21 @@ services:
       # 基础 URL (可选)
       # - CHATGPT2API_BASE_URL=https://your-domain.com
 
-      # sentinel 浏览器求解服务（2026-10-14 起对话/生图接口必需，缺失会返回伪装的 404）
-      - CHATGPT2API_SENTINEL_SOLVER_URL=http://sentinel-solver:8080
-      - CHATGPT2API_SENTINEL_SOLVER_KEY=change-me
-    depends_on:
-      - sentinel-solver
+      # 可选：sentinel 浏览器求解服务（默认关闭，使用内置轻量 Python 求解；极高风控时参考 docs/sentinel-solver.md 启用）
+      # - CHATGPT2API_SENTINEL_SOLVER_URL=http://sentinel-solver:8080
+      # - CHATGPT2API_SENTINEL_SOLVER_KEY=change-me
+    # depends_on:
+    #   - sentinel-solver
 
-  # 无头 Chromium 求解服务，镜像由 CI 构建
-  sentinel-solver:
-    image: ghcr.io/fxxisme/chatgpt2api_copy-sentinel-solver:latest
-    container_name: chatgpt2api-sentinel-solver
-    restart: unless-stopped
-    shm_size: "1gb"
-    environment:
-      - SENTINEL_SOLVER_KEY=change-me
-      # 浏览器出网代理，需与主服务出口一致；服务器直连则留空
-      # - SENTINEL_SOLVER_PROXY=http://host:7890
-      # 页面时区，建议与出口 IP 所在地一致
-      # - SENTINEL_SOLVER_TIMEZONE=Asia/Shanghai
+  # 可选：无头 Chromium 求解服务（默认关闭；需要启用时取消注释，详细说明见 docs/sentinel-solver.md）
+  # sentinel-solver:
+  #   image: ghcr.io/fxxisme/chatgpt2api_copy-sentinel-solver:latest
+  #   container_name: chatgpt2api-sentinel-solver
+  #   restart: unless-stopped
+  #   shm_size: "1gb"
+  #   environment:
+  #     - SENTINEL_SOLVER_KEY=change-me
+  #     # 浏览器出网代理，需与主服务出口一致；服务器直连则留空
+  #     # - SENTINEL_SOLVER_PROXY=http://host:7890
+  #     # 页面时区，建议与出口 IP 所在地一致
+  #     # - SENTINEL_SOLVER_TIMEZONE=Asia/Shanghai

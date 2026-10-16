@@ -116,6 +116,10 @@ CODEX_RESPONSES_INSTRUCTIONS = (
     "Return the generated image result."
 )
 
+_BOOTSTRAP_CACHE: dict[str, tuple[list[str], str, float]] = {}
+_BOOTSTRAP_CACHE_TTL = 3600.0  # 1 hour
+_BOOTSTRAP_LOCK = threading.Lock()
+
 # 内容政策违规错误关键词（上游拒绝生成图片的各种表述）
 _CONTENT_POLICY_KEYWORDS = (
     # 明确的内容政策违规
@@ -2520,7 +2524,9 @@ class OpenAIBackendAPI:
                 return file_ids, sediment_ids
             logger.debug({"event": "image_poll_wait", "conversation_id": conversation_id,
                           "elapsed_secs": round(time.time() - start, 1)})
-            wait = min(interval, max(0.0, _remaining()))
+            # 未在配置中显式重写时，采用阶梯式短轮询（2.0s -> 3.0s -> 4.0s... 最高不超过 interval）
+            step_wait = interval if "image_poll_interval_secs" in config.data else min(interval, 1.5 + attempt * 1.0)
+            wait = min(step_wait, max(0.0, _remaining()))
             if wait > 0:
                 time.sleep(wait)
         logger.info({
@@ -2641,17 +2647,13 @@ class OpenAIBackendAPI:
         """把图片结果 id 解析成可下载 URL。"""
         urls = []
         skip_patterns = {"file_upload"}
-        for file_id in file_ids:
-            if file_id in skip_patterns:
-                logger.debug({
-                    "event": "image_file_id_skipped",
-                    "source": "file",
-                    "conversation_id": conversation_id,
-                    "id": file_id,
-                })
-                continue
+        valid_file_ids = [fid for fid in file_ids if fid not in skip_patterns]
+        if len(valid_file_ids) == 1:
+            file_id = valid_file_ids[0]
             try:
                 url = self._get_file_download_url(file_id, timeout_secs=self._deadline_timeout_secs(60))
+                if url and url not in urls:
+                    urls.append(url)
             except Exception as exc:
                 logger.debug({
                     "event": "image_download_url_failed",
@@ -2660,17 +2662,25 @@ class OpenAIBackendAPI:
                     "id": file_id,
                     "error": repr(exc),
                 })
-                continue
-            if url:
-                if url not in urls:
-                    urls.append(url)
-            else:
-                logger.debug({
-                    "event": "image_download_url_empty",
-                    "source": "file",
-                    "conversation_id": conversation_id,
-                    "id": file_id,
-                })
+        elif len(valid_file_ids) > 1:
+            def _fetch_file_url(fid: str) -> str:
+                try:
+                    return self._get_file_download_url(fid, timeout_secs=self._deadline_timeout_secs(60))
+                except Exception as exc:
+                    logger.debug({
+                        "event": "image_download_url_failed",
+                        "source": "file",
+                        "conversation_id": conversation_id,
+                        "id": fid,
+                        "error": repr(exc),
+                    })
+                    return ""
+
+            with ThreadPoolExecutor(max_workers=min(len(valid_file_ids), 4)) as executor:
+                for url in executor.map(_fetch_file_url, valid_file_ids):
+                    if url and url not in urls:
+                        urls.append(url)
+
         if not conversation_id or not sediment_ids:
             logger.debug({
                 "event": "image_urls_resolved",
@@ -2680,13 +2690,18 @@ class OpenAIBackendAPI:
                 "urls": urls,
             })
             return urls
-        for sediment_id in sediment_ids:
+
+        valid_sediment_ids = list(sediment_ids)
+        if len(valid_sediment_ids) == 1:
+            sediment_id = valid_sediment_ids[0]
             try:
                 url = self._get_attachment_download_url(
                     conversation_id,
                     sediment_id,
                     timeout_secs=self._deadline_timeout_secs(60),
                 )
+                if url and url not in urls:
+                    urls.append(url)
             except Exception as exc:
                 logger.debug({
                     "event": "image_download_url_failed",
@@ -2695,17 +2710,29 @@ class OpenAIBackendAPI:
                     "id": sediment_id,
                     "error": repr(exc),
                 })
-                continue
-            if url:
-                if url not in urls:
-                    urls.append(url)
-            else:
-                logger.debug({
-                    "event": "image_download_url_empty",
-                    "source": "sediment",
-                    "conversation_id": conversation_id,
-                    "id": sediment_id,
-                })
+        elif len(valid_sediment_ids) > 1:
+            def _fetch_sediment_url(sid: str) -> str:
+                try:
+                    return self._get_attachment_download_url(
+                        conversation_id,
+                        sid,
+                        timeout_secs=self._deadline_timeout_secs(60),
+                    )
+                except Exception as exc:
+                    logger.debug({
+                        "event": "image_download_url_failed",
+                        "source": "sediment",
+                        "conversation_id": conversation_id,
+                        "id": sid,
+                        "error": repr(exc),
+                    })
+                    return ""
+
+            with ThreadPoolExecutor(max_workers=min(len(valid_sediment_ids), 4)) as executor:
+                for url in executor.map(_fetch_sediment_url, valid_sediment_ids):
+                    if url and url not in urls:
+                        urls.append(url)
+
         logger.debug({
             "event": "image_urls_resolved",
             "conversation_id": conversation_id,
@@ -2782,12 +2809,25 @@ class OpenAIBackendAPI:
         return self._resolve_image_urls(conversation_id, file_ids, sediment_ids)
 
     def download_image_bytes(self, urls: list[str]) -> list[bytes]:
-        images = []
-        for url in urls:
+        if not urls:
+            return []
+        if len(urls) == 1:
+            response = self.session.get(urls[0], timeout=self._deadline_timeout_secs(120))
+            ensure_ok(response, "image_download")
+            return [response.content]
+
+        def _fetch(url: str) -> bytes:
             response = self.session.get(url, timeout=self._deadline_timeout_secs(120))
             ensure_ok(response, "image_download")
-            if response.content not in images:
-                images.append(response.content)
+            return response.content
+
+        with ThreadPoolExecutor(max_workers=min(len(urls), 4)) as executor:
+            contents = list(executor.map(_fetch, urls))
+
+        images = []
+        for content in contents:
+            if content not in images:
+                images.append(content)
         return images
 
     def stream_conversation(
@@ -2945,9 +2985,21 @@ class OpenAIBackendAPI:
             pass
 
     def _bootstrap(self) -> None:
-        """预热首页，并提取 PoW 相关脚本引用。即使失败也不阻断主业务流程。"""
+        """预热首页，并提取 PoW 相关脚本引用。优先使用内存缓存，即使失败也不阻断主业务流程。"""
         if self.pow_script_sources:
             return
+
+        now = time.monotonic()
+        with _BOOTSTRAP_LOCK:
+            cached = _BOOTSTRAP_CACHE.get(self.base_url)
+            if cached and cached[2] > now:
+                self.pow_script_sources = list(cached[0])
+                self.pow_data_build = cached[1]
+                if self.pow_data_build:
+                    self.client_version = self.pow_data_build
+                    self.session.headers["OAI-Client-Version"] = self.pow_data_build
+                return
+
         # 首页预热绝对不能携带 Authorization 或 chatgpt-account-id，避免被 Cloudflare 拦截
         auth = self.session.headers.pop("Authorization", None)
         account_id = self.session.headers.pop("chatgpt-account-id", None)
@@ -2964,6 +3016,13 @@ class OpenAIBackendAPI:
                 if self.pow_data_build:
                     self.client_version = self.pow_data_build
                     self.session.headers["OAI-Client-Version"] = self.pow_data_build
+                if self.pow_script_sources:
+                    with _BOOTSTRAP_LOCK:
+                        _BOOTSTRAP_CACHE[self.base_url] = (
+                            list(self.pow_script_sources),
+                            self.pow_data_build,
+                            time.monotonic() + _BOOTSTRAP_CACHE_TTL,
+                        )
             else:
                 if response.status_code in (403, 429, 503):
                     self._drop_cloudflare_cookies()
