@@ -75,6 +75,7 @@ type AccountMutationResponse = {
   removed?: number;
   refreshed?: number;
   relogined?: number;
+  updated?: number;
   errors?: Array<{ access_token: string; error: string }>;
 };
 
@@ -416,6 +417,13 @@ export async function updateAccount(
       access_token: accessToken,
       ...updates,
     },
+  });
+}
+
+export async function batchUpdateAccountStatus(tokens: string[], status: AccountStatus) {
+  return httpRequest<AccountMutationResponse>("/api/accounts/batch-status", {
+    method: "POST",
+    body: { tokens, status },
   });
 }
 

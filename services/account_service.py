@@ -1244,6 +1244,45 @@ class AccountService:
             return dict(account)
         return None
 
+    def batch_update_status(self, tokens: list[str], status: str) -> dict:
+        target_tokens = [token for token in tokens if token and str(token).strip()]
+        if not target_tokens:
+            return {"updated": 0, "items": self.list_accounts()}
+        updated_count = 0
+        with self._lock:
+            resolved_tokens = [self._resolve_access_token_locked(token) for token in target_tokens]
+            seen: set[str] = set()
+            unique_tokens: list[str] = []
+            for t in resolved_tokens:
+                if t and t not in seen:
+                    seen.add(t)
+                    unique_tokens.append(t)
+
+            for token in unique_tokens:
+                current = self._accounts.get(token)
+                if current is None:
+                    continue
+                if current.get("status") == status:
+                    continue
+                account = self._normalize_account({**current, "status": status, "access_token": token})
+                if account is None:
+                    continue
+                if status == "禁用":
+                    self._image_inflight.pop(token, None)
+                    self._image_cooldown_until.pop(token, None)
+                self._accounts[token] = account
+                updated_count += 1
+
+            if updated_count > 0:
+                self._save_accounts()
+                log_service.add(
+                    LOG_TYPE_ACCOUNT,
+                    f"批量更新 {updated_count} 个账号状态为 {status}",
+                    {"updated": updated_count, "status": status},
+                )
+            items = [dict(item) for item in self._accounts.values()]
+        return {"updated": updated_count, "items": items}
+
     def _record_refresh_success(self, access_token: str) -> None:
         with self._lock:
             access_token = self._resolve_access_token_locked(access_token)

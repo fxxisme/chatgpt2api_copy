@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  batchUpdateAccountStatus,
   deleteAccounts,
   fetchAccounts,
   fetchModels,
@@ -207,6 +208,7 @@ function AccountsPageContent() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isRelogining, setIsRelogining] = useState(false);
+  const [isBatchUpdating, setIsBatchUpdating] = useState(false);
   const [progress, setProgress] = useState<{
     visible: boolean;
     current: number;
@@ -345,6 +347,41 @@ function AccountsPageContent() {
       toast.error(message);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleBatchStatus = async (tokens: string[], status: AccountStatus) => {
+    if (tokens.length === 0) {
+      toast.error(`请先选择要${status === "禁用" ? "禁用" : "启用"}的账户`);
+      return;
+    }
+
+    setIsBatchUpdating(true);
+    try {
+      const data = await batchUpdateAccountStatus(tokens, status);
+      setAccounts(data.items);
+      setSelectedIds((prev) => prev.filter((id) => data.items.some((item) => item.access_token === id)));
+      toast.success(`已批量${status === "禁用" ? "禁用" : "启用"} ${data.updated ?? 0} 个账户`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `批量${status}失败`;
+      toast.error(message);
+    } finally {
+      setIsBatchUpdating(false);
+    }
+  };
+
+  const handleQuickToggleStatus = async (account: Account) => {
+    const nextStatus: AccountStatus = account.status === "禁用" ? "正常" : "禁用";
+    setIsBatchUpdating(true);
+    try {
+      const data = await batchUpdateAccountStatus([account.access_token], nextStatus);
+      setAccounts(data.items);
+      toast.success(`账号已${nextStatus === "禁用" ? "禁用" : "启用"}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "更新状态失败";
+      toast.error(message);
+    } finally {
+      setIsBatchUpdating(false);
     }
   };
 
@@ -1031,6 +1068,26 @@ function AccountsPageContent() {
                 </Button>
                 <Button
                   variant="ghost"
+                  className="h-8 rounded-lg px-3 text-stone-600 hover:bg-stone-100 hover:text-stone-800"
+                  onClick={() => void handleBatchStatus(selectedTokens, "禁用")}
+                  disabled={selectedTokens.length === 0 || isBatchUpdating}
+                  title="批量将选中账号设为禁用"
+                >
+                  {isBatchUpdating ? <LoaderCircle className="size-4 animate-spin" /> : <Ban className="size-4" />}
+                  批量禁用
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-8 rounded-lg px-3 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                  onClick={() => void handleBatchStatus(selectedTokens, "正常")}
+                  disabled={selectedTokens.length === 0 || isBatchUpdating}
+                  title="批量将选中账号设为正常"
+                >
+                  {isBatchUpdating ? <LoaderCircle className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+                  批量启用
+                </Button>
+                <Button
+                  variant="ghost"
                   className="h-8 rounded-lg px-3 text-rose-500 hover:bg-rose-50 hover:text-rose-600"
                   onClick={() => void handleDeleteTokens(abnormalTokens)}
                   disabled={abnormalTokens.length === 0 || isDeleting}
@@ -1197,8 +1254,27 @@ function AccountsPageContent() {
                               className="rounded-lg p-2 transition hover:bg-stone-100 hover:text-stone-700"
                               onClick={() => openEditDialog(account)}
                               disabled={isUpdating}
+                              title="编辑账号"
                             >
                               <Pencil className="size-4" />
+                            </button>
+                            <button
+                              type="button"
+                              className={cn(
+                                "rounded-lg p-2 transition",
+                                account.status === "禁用"
+                                  ? "hover:bg-emerald-50 hover:text-emerald-600 text-stone-400"
+                                  : "hover:bg-stone-100 hover:text-stone-700",
+                              )}
+                              title={account.status === "禁用" ? "启用账号" : "禁用账号"}
+                              onClick={() => void handleQuickToggleStatus(account)}
+                              disabled={isBatchUpdating}
+                            >
+                              {account.status === "禁用" ? (
+                                <CheckCircle2 className="size-4" />
+                              ) : (
+                                <Ban className="size-4" />
+                              )}
                             </button>
                             <button
                               type="button"

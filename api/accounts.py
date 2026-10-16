@@ -71,6 +71,11 @@ class AccountUpdateRequest(BaseModel):
     proxy: str | None = None
 
 
+class AccountBatchStatusRequest(BaseModel):
+    tokens: list[str] = Field(default_factory=list)
+    status: Literal["正常", "限流", "异常", "禁用"]
+
+
 class CPAPoolCreateRequest(BaseModel):
     name: str = ""
     base_url: str = ""
@@ -343,6 +348,17 @@ def create_router() -> APIRouter:
         if account is None:
             raise HTTPException(status_code=404, detail={"error": "account not found"})
         return {"item": account, "items": account_service.list_accounts()}
+
+    @router.post("/api/accounts/batch-status")
+    async def batch_update_account_status(
+        body: AccountBatchStatusRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        tokens = _unique_tokens(body.tokens)
+        if not tokens:
+            raise HTTPException(status_code=400, detail={"error": "tokens is required"})
+        return account_service.batch_update_status(tokens, body.status)
 
     @router.post("/api/accounts/oauth/start")
     async def start_oauth_login(
