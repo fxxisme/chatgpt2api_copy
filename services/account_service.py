@@ -1220,7 +1220,7 @@ class AccountService:
             items = [dict(item) for item in self._accounts.values()]
         return {"removed": removed, "items": items}
 
-    def update_account(self, access_token: str, updates: dict, quiet: bool = False) -> dict | None:
+    def update_account(self, access_token: str, updates: dict, quiet: bool = False, save: bool = True) -> dict | None:
         if not access_token:
             return None
         with self._lock:
@@ -1233,11 +1233,13 @@ class AccountService:
                 return None
             if account.get("status") == "限流" and config.auto_remove_rate_limited_accounts:
                 self._accounts.pop(access_token, None)
-                self._save_accounts()
+                if save:
+                    self._save_accounts()
                 log_service.add(LOG_TYPE_ACCOUNT, "自动移除限流账号", {"token": anonymize_token(access_token)})
                 return None
             self._accounts[access_token] = account
-            self._save_accounts()
+            if save:
+                self._save_accounts()
             if not quiet:
                 log_service.add(LOG_TYPE_ACCOUNT, "更新账号",
                                 {"token": anonymize_token(access_token), "status": account.get("status")})
@@ -1318,6 +1320,7 @@ class AccountService:
         event: str,
         error: str,
         defer_invalid_removal: bool = True,
+        save: bool = True,
     ) -> bool:
         now = datetime.now(timezone.utc)
         with self._lock:
@@ -1334,7 +1337,8 @@ class AccountService:
             account = self._normalize_account(next_item)
             if account is not None:
                 self._accounts[access_token] = account
-                self._save_accounts()
+                if save:
+                    self._save_accounts()
             if should_defer:
                 log_service.add(
                     LOG_TYPE_ACCOUNT,
@@ -1396,6 +1400,7 @@ class AccountService:
         access_token: str,
         event: str = "fetch_remote_info",
         defer_invalid_removal: bool = True,
+        save: bool = True,
     ) -> dict[str, Any] | None:
         if not access_token:
             raise ValueError("access_token is required")
@@ -1423,6 +1428,7 @@ class AccountService:
                         event,
                         str(retry_exc),
                         defer_invalid_removal=defer_invalid_removal,
+                        save=save,
                     ):
                         self.remove_invalid_token(refreshed_token, event)
                     raise
@@ -1433,11 +1439,12 @@ class AccountService:
                     event,
                     str(exc),
                     defer_invalid_removal=defer_invalid_removal,
+                    save=save,
                 ):
                     self.remove_invalid_token(active_token, event)
                 raise
         self._record_refresh_success(active_token)
-        return self.update_account(active_token, result)
+        return self.update_account(active_token, result, save=save)
 
     # ---- 刷新进度追踪 ----
 
@@ -1560,10 +1567,11 @@ class AccountService:
         if progress_id:
             self.init_refresh_progress(progress_id, len(access_tokens))
 
+        dirty = False
         executor = ThreadPoolExecutor(max_workers=max_workers)
         try:
             futures = {
-                executor.submit(self.fetch_remote_info, token, "refresh_accounts", defer_invalid_removal): token
+                executor.submit(self.fetch_remote_info, token, "refresh_accounts", defer_invalid_removal, save=False): token
                 for token in access_tokens
             }
             for future in as_completed(futures):
@@ -1574,6 +1582,7 @@ class AccountService:
                     executor.shutdown(wait=False, cancel_futures=True)
                     raise
                 except Exception as exc:
+                    dirty = True
                     error_str = str(exc)
                     # TLS/代理连接错误是网络问题，不计入账号失败
                     from services.protocol.conversation import is_tls_connection_error
@@ -1582,6 +1591,7 @@ class AccountService:
                 else:
                     if account is not None:
                         refreshed += 1
+                        dirty = True
 
                 if progress_id:
                     self.update_refresh_progress(progress_id, token)
@@ -1592,6 +1602,10 @@ class AccountService:
             raise
         else:
             executor.shutdown(wait=True, cancel_futures=True)
+        finally:
+            if dirty:
+                with self._lock:
+                    self._save_accounts()
 
         # 自动重新登录异常账号（仅当配置开启时）
         relogined = 0
